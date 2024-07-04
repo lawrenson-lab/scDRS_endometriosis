@@ -262,10 +262,10 @@ sf10<-temp%>%mutate(level=case_when(str_detect(level,"harmo")~"Non-immune cell t
 
 p0<-plot_grid(sf7+theme(legend.position = "bottom",legend.direction = "vertical"),sf8,labels = c('a'),rel_widths = c(.25,.75))
 p1<-plot_grid(sf9A,sf9B,nrow = 2,labels = c('d','e'))
-p1<-plot_grid(p1,sf9C,sf9D,ncol=3,labels = c('','f','g'))
-p2<-plot_grid(sf10,NULL,NULL,ncol=3,labels = c('h','i','j'))
-ggsave("m_fig3.pdf",height = 14,width=14,device = cairo_pdf,
-       plot_grid(p0,p1,p3,nrow = 3,rel_heights = c(.3,.4,.3)))
+p1<-plot_grid(p1,sf9D,sf10,ncol=3,labels = c('','f','g'))
+p2<-plot_grid(NULL,NULL,labels = c('h','i'))
+ggsave("m_fig3.pdf",height = 16,width=19,device = cairo_pdf,
+       plot_grid(p0,p1,p2,nrow = 3,rel_heights = c(.4,.3,.3)))
 
 ```
 
