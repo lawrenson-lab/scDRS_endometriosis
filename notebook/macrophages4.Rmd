@@ -1,0 +1,208 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Load libraries/data
+```{r}
+library(tidyverse)
+library(Seurat)
+library(cowplot)
+library(ggplot2)
+library(rstatix)
+library(readxl)
+library(progeny)
+
+sc<-readRDS("data/fixed_annotated_aux.seurat.rds")
+epi<-subset(sc,cells=which(sc$epithelial_subcluster_type=="EnEpi cells"&
+                               !is.na(sc$published_epithelial_subtype)))
+gc()
+markers<-read_excel("../Downloads/41588_2022_1254_MOESM4_ESM.xlsx",sheet = 7,skip =2)
+markers<-markers%>%filter(Cluster%in%c("SOX9+/LGR5+","Glandular secretory",
+                                       "IHH+/SPDEF+","MUC5B+","Ciliated"))
+```
+
+# Label transfer
+## Subcluster level
+```{r}
+organoids <- readRDS("data/MONT0013_PostQC_PostCluster_Plates1-8.rds")
+#computation intenstive - run of memory once
+epi_anchors <- FindTransferAnchors(reference = epi,
+                                   query = organoids,
+                                   normalization.method = 'SCT',
+                                   features = unique(markers$Gene))
+predictions <- TransferData(anchorset = epi_anchors,
+                            refdata = epi$published_epithelial_subtype)
+
+#rganoids <- IntegrateEmbeddings(anchorset = epi_anchors, reference = epi,
+# query = organoids, new.reduction.name = "ref.pca")
+#organoids <- ProjectUMAP(query = organoids, query.reduction = "ref.pca", reference = epi,
+# reference.reduction = "pca", reduction.model = "umap")
+
+organoids <- AddMetaData(organoids,metadata = predictions)
+#p1 <- DimPlot(epi, reduction = "umap", group.by = "published_epithelial_subtype", label = TRUE, label.size = 3,
+#              repel = TRUE) + NoLegend() + ggtitle("Reference annotations")
+#p2 <- DimPlot(organoids, reduction = "ref.umap", group.by = "predicted.id",label = TRUE,
+#              label.size = 3, repel = TRUE) + NoLegend() + ggtitle("Query transferred labels")
+#png("label_transfer.UMAP.png")
+#p1 + p2
+#dev.off()
+
+saveRDS(organoids,"data/MONT0013_PostQC_PostCluster_Plates1-8.rds")
+
+```
+
+## Cluster level 
+```{r}
+endo_anchors <- FindTransferAnchors(reference = sc,query = organoids,normalization.method = 'SCT')
+predictions <- TransferData(anchorset = endo_anchors,refdata = sc$harmonized_major_cell_type)
+colnames(predictions)[c(1,16)]<-paste0("harmon_",colnames(predictions)[c(1,16)])
+
+organoids <- AddMetaData(organoids,metadata = predictions)
+saveRDS(organoids,"data/MONT0013_PostQC_PostCluster_Plates1-8.rds")
+
+```
+
+# sanity check 
+```{r}
+FeaturePlot(organoids,features = c("prediction.score.IHH..SPDEF.",
+                                   "prediction.score.Glandular.secretory",
+                                   "prediction.score.MUC5B.",
+                                   "prediction.score.SOX9..LGR5.",
+                                   "prediction.score.Ciliated",
+                                   "prediction.score.EnEpi.cells",
+                                   "prediction.score.EnS.cells"))
+Idents(organoids)<-organoids$seurat_clusters
+VlnPlot(organoids,features = c("prediction.score.IHH..SPDEF.",
+                               "prediction.score.Glandular.secretory", 
+                               "prediction.score.MUC5B.", 
+                               "prediction.score.SOX9..LGR5.", 
+                               "prediction.score.Ciliated", 
+                               "prediction.score.EnEpi.cells",
+                               "prediction.score.EnS.cells"),pt.size = 0)
+
+organoids@meta.data%>%
+  group_by(predicted.id)%>%
+  summarise(score=mean(prediction.score.max),n=n())
+```
+# new annotations considering cluster and subcluster prediction
+```{r}
+organoids@meta.data<-organoids@meta.data%>%
+  mutate(final_prediction=ifelse(harmon_predicted.id=="EnEpi cells",
+                                 predicted.id,
+                                 harmon_predicted.id))
+organoids@meta.data<-organoids@meta.data%>%
+  mutate(final_prediction=ifelse(prediction.score.max<.5&harmon_prediction.score.max<.5,
+                                 "unclassified",
+                                 final_prediction))
+```
+
+# Add scores
+```{r}
+il1<-read_tsv("docs/IL1_signaling_hormone_targets.tsv")
+organoids<-AddModuleScore(organoids,features = list(unique(il1$gene_symbol)),
+                          name = "signaling_IL",assay = "RNA")
+
+organoids <- progeny(organoids, scale=FALSE, organism="Human",
+                     top=100,return_assay = TRUE)#perm>1 is slow but produces pvalues
+organoids <- Seurat::ScaleData(organoids, assay = "progeny")
+temp<-t(organoids@assays$progeny@scale.data)
+organoids<-AddMetaData(organoids,temp)
+
+```
+
+# Filter EnEpi subclusters
+```{r}
+org1<-subset(organoids,
+             cells=which(str_detect(organoids$final_prediction,"SOX9|MUC|dular|IHH|ated")))
+sc1<-VlnPlot(org1,features = c("prediction.score.IHH..SPDEF.",
+                               "prediction.score.Glandular.secretory", 
+                               "prediction.score.MUC5B.", 
+                               "prediction.score.SOX9..LGR5.", 
+                               "prediction.score.Ciliated"),
+             pt.size=0,
+             stack=T)
+
+sanity_markers<-list("SOX9+LGR5+"=c("SOX9","LGR5","MMP7","ESR1","PGR"),
+                "MUC5+"=c("MUC5B", "TFF3"), 
+                "Glandular\nsecretory"=c("PAEP", "DPP4", "SPP1"), 
+                "IHH+SPDEF+"=c("IHH","SPDEF","SERPINA5","HIF1A"),
+                 Ciliated=c("TPPP3", "PIFO", "FOXJ1"))
+sanity_markers<-sanity_markers%>%reshape2::melt()%>%
+  mutate(marker=value)%>%select(-value)%>%deframe()
+
+temp<-org1@meta.data%>%count(final_prediction)%>%arrange(n)%>%
+  mutate(final_prediction=factor(final_prediction,levels=final_prediction))
+Idents(org1)<-factor(org1$final_prediction,levels=temp$final_prediction)
+sc2A<-DotPlot(org1,features = sanity_markers)+RotatedAxis()+
+  scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+  theme(strip.text = element_text(angle=80))+
+  labs(x="Gene",y="")+
+  guides(color = guide_colorbar(title = "Average\nexpression"),
+           size=guide_legend(title="Percent\nexpressed"))
+sc2B<-temp%>%
+  ggplot(aes(x=n,y=final_prediction))+geom_col()+
+  theme_classic(base_size = 14)+labs(y="")+
+  theme(axis.text.y = element_blank(),axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle=45,vjust = 1,hjust = 1),
+        axis.title.y = element_blank())+
+  scale_x_continuous(trans = "log10")
+sc2C<-org1@meta.data%>%
+  mutate(final_prediction=factor(final_prediction,levels=temp$final_prediction))%>%
+  ggplot(aes(x=prediction.score.max,y=final_prediction))+
+  geom_boxplot()+
+  theme_classic(base_size = 14)+labs(y="")+
+  theme(axis.text.y = element_blank(),axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle=45,vjust = 1,hjust = 1),
+        axis.title.y = element_blank())
+sc2<-plot_grid(sc2A+theme(legend.position = "none"),
+               sc2C,sc2B,ncol=3,align = 'h',axis = 'bt',rel_widths = c(.5,.3,.2))
+sc2<-plot_grid(sc2,get_legend(sc2A),rel_widths = c(.9,.1))
+```
+
+# new-new annotation since sanity plots show an overlap between clusters
+```{r}
+org1@meta.data<-org1@meta.data%>%
+  mutate(alt_pred=ifelse(str_detect(final_prediction,"IHH|SOX|MUC"),
+                         "mixed",
+                         final_prediction))
+
+temp<-org1@meta.data%>%count(alt_pred)%>%arrange(n)%>%
+  mutate(alt_pred=factor(alt_pred,levels=alt_pred))
+Idents(org1)<-factor(org1$alt_pred,levels=temp$alt_pred)
+sc2A<-DotPlot(org1,features = sanity_markers)+RotatedAxis()+
+  scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+  theme(strip.text = element_text(angle=80))+
+  labs(x="Gene",y="")+
+  guides(color = guide_colorbar(title = "Average\nexpression"),
+           size=guide_legend(title="Percent\nexpressed"))
+sc2B<-temp%>%
+  ggplot(aes(x=n,y=alt_pred))+geom_col()+
+  theme_classic(base_size = 14)+labs(y="")+
+  theme(axis.text.y = element_blank(),axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle=90))+
+  scale_x_continuous(trans = "log10")
+sc2<-plot_grid(sc2A+theme(legend.position = "none"),NULL,
+          sc2B,ncol=3,align = 'h',axis = 'bt',rel_widths = c(.7,-.01,.3))
+sc2<-plot_grid(sc2,get_legend(sc2A),rel_widths = c(.9,.1))
+
+```
+
+```{r}
+sf1<-FeaturePlot(organoids,features = "prediction.score.max")+scale_color_viridis_c(option = 'A',direction = -1)
+
+temp<-org1@meta.data
+temp%>%ggplot(aes(x=final_prediction,y=signaling_IL1,group=final_prediction,col=prediction.score.max))+geom_violin()+geom_jitter()+stat_compare_means(method = "t.test",ref.group = "Ciliated",label = "p.signif")+theme_classic(base_size = 14)+theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+labs(x="predicted label",y="IL1 signaling",col="label\nconfidence")
+
+
+temp1<-temp%>%mutate(Estrogen=cut(Estrogen,breaks = 10,labels = F))%>%
+  group_by(Estrogen,predicted.id)%>%
+  mutate(il1=mean(signaling_IL1))%>%
+  select(predicted.id,Estrogen,il1)%>%
+  distinct()
+temp1%>%ggplot(aes(x=Estrogen,y=il1,group=predicted.id,col=predicted.id))+geom_point()+geom_line()+theme_classic(base_size = 14)
+
+
+p0<-plot_grid(sf1,sf2,align = 'h',labels = c('a','b'))
+p1<-plot_grid(sf4,NULL,ncol=2,labels = c("d",''),rel_widths = c(.6,.4))
+```

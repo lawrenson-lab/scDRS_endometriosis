@@ -1,0 +1,355 @@
+---
+title: "Macrophages paper"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(cowplot)
+library(ggplot2)
+library(rstatix)
+
+sc<-readRDS("data/fixed_annotated_aux.seurat.rds")
+sc<-subset(sc,cells = which(!sc$harmonized_major_cell_type%in%c("Exclude","Erythrocytes")))
+```
+
+# cell cluster umaps
+```{r}
+cell_order<-sc@meta.data%>%distinct(harmonized_major_cell_type)%>%
+  mutate(type=ifelse(str_detect(harmonized_major_cell_type,"B|Mast|Myel|NK|Plas|T"),
+                     "immune","non"))%>%
+  arrange(type,harmonized_major_cell_type)
+cell_order<-cell_order[c(1,5,2:4,6:nrow(cell_order)),]
+
+sc@meta.data<-sc@meta.data%>%
+  mutate(group_major_plus_immune=str_replace(harmonized_major_plus_immune_cell_type,"Memmory","Memory")%>%
+           str_replace("Gamma-Delta","γδ")%>%
+           str_replace("Cells","cells")%>%
+           str_remove(" \\(.+"))
+aux_table<-sc@meta.data
+
+immune<-subset(sc,cells=which(!is.na(sc$Final_Immune_Cluster_ID)))
+cell_order1<-immune@meta.data%>%
+  mutate(harmonized_major_cell_type=ifelse(str_detect(group_major_plus_immune,"Early"),
+                                           "T cells",
+                                           harmonized_major_cell_type))%>%
+  count(harmonized_major_cell_type,group_major_plus_immune)
+cell_order1<-cell_order1[c(1,7,2:6,8,11,9,10,12:15),]
+
+cluster.cols = c("#8DB600", "#d53e48", "#f46d43", "#fdae61", "#ffffbf", "#e6f598", "#abdda4", "#66c2a5", "#3288bd",'#9e0142', '#604E97', '#E25822','#008856', '#BE0032', '#0067A5')
+names(cluster.cols)<-cell_order1$group_major_plus_immune
+cluster.cols1<-c('darkorange4','#6A3D9A','skyblue2','#CAB2D6','khaki2','darkturquoise')
+names(cluster.cols1)<-cell_order$harmonized_major_cell_type[cell_order$type=="non"]
+
+Idents(sc)<-factor(sc$harmonized_major_cell_type,
+                   levels = cell_order$harmonized_major_cell_type)
+temp<-c(cluster.cols[c(1:4,7,9)],cluster.cols1)
+names(temp)<-cell_order$harmonized_major_cell_type
+sf1<-DimPlot(sc,raster = F,cols =temp,
+             label.size = 4,alpha=0.4,label = T,repel=T)+
+     NoLegend()+NoAxes()+
+    annotate("segment", 
+             x = c(-10,-10), xend = c(-6,-10), 
+             y = c(-10,-10), yend = c(-10,-5), 
+             arrow = arrow(type = "closed", length = unit(10, 'pt')))+
+    annotate("text",x = -8,y=-11.5,label="UMAP 1",size=4)+
+    annotate("text",x=-11,y=-8,label="UMAP 2",size=4,angle=90)
+
+Idents(immune)<-factor(immune$group_major_plus_immune,levels = cell_order1$group_major_plus_immune)
+sf2<-DimPlot(immune,dims = c(1,3),raster = F,cols=cluster.cols,
+             label = F,alpha = 0.7)+
+    xlim(c(-9.5,-1))+NoAxes()+
+    annotate("segment", 
+             x = c(-9,-9), xend = c(-7.5,-9), 
+             y = c(-9,-9), yend = c(-9,-5), 
+             arrow = arrow(type = "closed", length = unit(10, 'pt')))+
+    annotate("text",x = -8.3,y=-10,label="UMAP 1",size=4)+
+    annotate("text",x=-9.5,y=-7,label="UMAP 3",size=4,angle=90)
+
+
+```
+
+# markers
+```{r}
+#canonical_markers<-list(T=c("CD3E","CD3D","CD3G","CD8A","CD4"),NK=c("KIR2DL4","NCAM1"),Myeloid=c("CD14","LYZ","CD68"),'B/Plasma'=c("MS4A1","CD79A","JCHAIN","SDC1","CD27"),Mast=c("KIT","TPSB2"))
+canonical_markers<-list(B=c("CD79A","MS4A1"),
+                        Plasma=c("JCHAIN","SDC1","CD27"),
+                        Mast=c("KIT","TPSB2"),
+                        Myeloid=c("CD14","LYZ","CD68","CD1C","IL10"),
+                        NK=c("KIR2DL4","NCAM1"), 
+                        Exhausted=c("PDCD1","CTLA4","TIGIT"),
+                        Memory="IL7R",
+                        Effector="CD69",
+                        Th17=c("RORC","IL17A"),
+                        Th2=c("GATA3"),
+                        "γδ"=c("TRDC","TRGC1"),
+                        'T'=c("CD3D","CD8A","CD4"))
+canonical_markers<-canonical_markers%>%reshape2::melt()%>%mutate(marker=value)%>%select(-value)%>%deframe()
+
+Idents(immune)<-factor(immune$group_major_plus_immune,levels = cell_order1$group_major_plus_immune)
+sf3<-DotPlot(immune,features = rev(canonical_markers))+RotatedAxis()+
+    scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+labs(x="",y="")+
+    theme(strip.text.x.top = element_text(angle=45))+
+    guides(color = guide_colorbar(title = "Average\nexpression"),
+           size=guide_legend(title="Percent\nexpressed"))
+
+temp<-immune@meta.data%>%count(group_major_plus_immune)
+sf3A<-temp%>%mutate(group_major_plus_immune=factor(group_major_plus_immune,                                              levels=cell_order1$group_major_plus_immune))%>%
+  ggplot(aes(x=n,y=group_major_plus_immune))+geom_col()+
+  theme_classic(base_size = 14)+theme(axis.text.y = element_blank(),
+                                      axis.line.y = element_blank(),
+                                      axis.ticks.y = element_blank())+
+  labs(y="")
+
+p1<-plot_grid(sf3+theme(legend.position = "none",
+                        strip.text.x.top = element_text(angle=65,vjust = .5,
+                                                        hjust = .5),
+                        panel.spacing = unit(20,"lines"),
+                        panel.margin.y = unit(-.5, "lines")),
+              sf3A+theme(plot.margin = unit(c(1,1,1,-1), "cm")),
+              get_legend(sf3),ncol = 3,rel_widths = c(.7,.15,.15),
+              align = 'h',axis = 'bt')
+
+```
+
+# score distribution
+```{r}
+scores<-read_tsv("scDRS/endometriosis.score.gz")
+colnames(scores)[1]<-"barcode"
+scores<-aux_table%>%rownames_to_column("barcode")%>%
+  select(group_major_plus_immune,barcode,Class,Stage.y)%>%
+  left_join(scores,by="barcode")
+
+scores<-scores%>%
+  mutate(group_major_plus_immune=factor(group_major_plus_immune,
+                       levels = c(cell_order1$group_major_plus_immune,
+                                  cell_order$harmonized_major_cell_type[cell_order$type=="non"])),
+         stage=case_when(Stage.y%in%c("Stage 1","Stage 2")~"Low",Stage.y%in%c("Stage 3","Stage 4")~"High",TRUE~NA))
+
+immune@meta.data<-immune@meta.data%>%
+  rownames_to_column("barcode")%>%
+  left_join(scores[,c("barcode","norm_score","mc_pval")],by="barcode")%>%
+  column_to_rownames("barcode")
+sf4<-FeaturePlot(immune,features = "norm_score",dims = c(1,3),raster = F)+
+    scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+    ggtitle("")+NoAxes()+xlim(c(-9.5,-1))+labs(col="scDRS")
+
+
+#################supplementary
+plot_df<-scores%>%group_by(group_major_plus_immune,Class)%>%summarise(cells=n(),avg=mean(norm_score,na.rm=T))
+sf8<-plot_df%>%
+    ggplot(aes(y=Class,x=group_major_plus_immune,size=cells,col=avg))+
+    geom_point()+
+    theme_classic(base_size = 16)+
+    theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+    labs(x='',y='',col="average\nscDRS")+
+    scale_color_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+    scale_size(range=c(1,8))
+#################
+
+#temp<-aux_table%>%count(group_major_plus_immune,Class)%>%pivot_wider(names_from = Class,values_from = n)%>%column_to_rownames("group_major_plus_immune")
+#temp<-apply(temp,1,function(x) min(x,na.rm=T))
+#plot_df<-scores%>%split(scores$Class)%>%lapply(function(x) x%>%split(x$group_major_plus_immune))
+#sub<-lapply(plot_df, function(x) lapply(names(temp), function(y) x[[y]][sample(1:nrow(x[[y]]),temp[y],replace = T),])%>%bind_rows)%>%bind_rows
+#sub%>%drop_na()%>%wilcox_test(norm_score~Class)
+
+#plot_df<-scores%>%split(scores$group_major_plus_immune)
+#temp<-plot_df%>%lapply(function(x) x%>%wilcox_test(norm_score~Class))
+
+
+```
+
+# Boxplots
+```{r}
+endometriosis<-read_tsv("scDRS/endometriosis.scdrs_group.group_harmonized_major_plus_immune")
+endometriosis<-endometriosis%>%
+  mutate(group=str_replace(group,"Memmory","Memory"),
+         group=str_replace(group,"Gamma-Delta","γδ"),
+         group=str_replace(group,"Cells","cells"))
+endometriosis<-scores%>%group_by(group_major_plus_immune)%>%
+    summarise(signi=sum(mc_pval<0.05,na.rm = T))%>%
+    left_join(endometriosis,by=c("group_major_plus_immune"="group"))
+endometriosis<-endometriosis%>%drop_na()%>%
+  mutate(prop=100*signi/n_cell,
+         hetero=hetero_mcp<0.05)%>%
+  arrange(assoc_mcp)
+
+sf5<-scores%>%drop_na()%>%mutate(group_major_plus_immune=factor(group_major_plus_immune,                                                     levels=endometriosis$group_major_plus_immune))%>%
+    ggplot(aes(x=group_major_plus_immune,y=norm_score))+geom_boxplot()+
+    theme_classic(base_size = 16)+
+    theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+    labs(x="",y="scDRS")+
+    geom_hline(yintercept = 0,col="red")
+
+sf5<-sf5+geom_point(data=endometriosis,
+                    aes(x=group_major_plus_immune,
+                        col=prop,size=assoc_mcp,y=7,shape=hetero))+
+    scale_size(range=c(6,2),breaks = c(0.5,0.05,0))+
+    scale_shape_manual(values=16:15)+
+    scale_color_gradient(trans="log10",breaks=c(1,3,10,30))+
+    scale_y_continuous(breaks = seq(-5,5,2.5))+
+    labs(size="P-val",col="Significant %",shape="Heterogeneity")+
+    guides(shape = guide_legend(override.aes = list(size = 5)))
+lgd5<-cowplot::get_plot_component(sf5+theme(legend.position = "top"), 'guide-box-top', return_all = TRUE)
+sf5<-sf5+theme(legend.position = "none")
+temp<-endometriosis%>%bind_cols(ggplot_build(sf5)$data[[3]])
+
+
+class<-read_tsv("scDRS/endometriosis.scdrs_group.Class.tsv")
+class<-scores%>%group_by(Class)%>%
+  summarise(signi=sum(mc_pval<0.05,na.rm=T))%>%
+  left_join(class,by=c("Class"="group"))
+class<-class%>%drop_na()%>%
+  mutate(prop=100*signi/n_cell,
+         hetero=hetero_mcp<0.05)%>%
+  arrange(assoc_mcp)
+plot_df<-plot_df%>%
+  mutate(Class=factor(Class,levels=class$Class))
+sf6<-scores%>%ggplot(aes(x=Class,y=norm_score))+geom_boxplot()+
+  theme_classic(base_size = 16)+
+  theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+  labs(x="",y="")+
+  geom_hline(yintercept = 0,col="red")
+
+sf6<-sf6+geom_point(data=class,aes(x=Class,col=as.numeric(prop),size=as.numeric(assoc_mcp),y=7))+
+    scale_size(range=c(6,2),limits = range(temp$assoc_mcp))+
+    scale_color_gradientn(breaks=c(1,3,10,30),trans="log10",
+                          colours = temp%>%arrange(prop)%>%select(colour)%>%unlist,
+                          limits=range(temp$prop))+
+  scale_y_continuous(breaks = seq(-5,5,2.5))+
+  labs(size="p-val",col="significant %")+
+  theme(legend.position = "none")
+
+
+plot_df<-scores%>%
+  filter(Class%in%c("Peritoneal endometriosis","Endometrioma"))
+stage<-read_tsv("scDRS/endometriosis.scdrs_group.stage")
+stage<-plot_df%>%group_by(stage)%>%
+    summarise(signi=sum(mc_pval<0.05,na.rm = T))%>%
+    left_join(stage,by=c("stage"="group"))
+stage<-stage%>%drop_na()%>%
+  mutate(prop=100*signi/n_cell)%>%
+  arrange(assoc_mcp)
+sf7<-plot_df%>%drop_na%>%mutate(stage=factor(stage,levels = c("Low","High")))%>%
+  ggplot(aes(x=stage,y=norm_score))+geom_boxplot()+
+    theme_classic(base_size = 16)+
+    theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+    labs(x="",y="")+geom_hline(yintercept = 0,col="red")
+sf7<-sf7+geom_point(data=stage,aes(x=stage,col=prop,size=assoc_mcp,y=7))+
+    scale_size(range=c(6,2),limits = range(temp$assoc_mcp))+
+    scale_color_gradientn(breaks=c(1,3,10,30),trans="log10",
+                          colours = temp%>%arrange(prop)%>%select(colour)%>%unlist,
+                          limits=range(temp$prop))+
+    scale_y_continuous(breaks = seq(-5,5,2.5))+
+    labs(size="p-val",col="significant %")+
+    theme(legend.position = "none")
+
+```
+
+```{r}
+modelGroup<-lm(norm_score~group_major_plus_immune,data=scores)
+modelClass<-lm(norm_score~Class,data=scores)
+modelStage<-lm(norm_score~stage,
+data=scores%>%filter(Class%in%c("Peritoneal endometriosis","Endometrioma")))
+modelT<-lm(norm_score~group_major_plus_immune+Class+stage,
+           data=scores%>%filter(Class%in%c("Peritoneal endometriosis","Endometrioma")))
+rs<-as.data.frame(cbind(variable=c("Cell type","Class","Stage","Total"),
+    r=sapply(list(modelGroup,modelClass,modelStage,modelT),function(x)
+    100*summary(x)$adj.r.squared)))
+
+rs<-rs%>%mutate(r=as.numeric(r))%>%arrange(r)
+sf9<-rs%>%mutate(variable=factor(variable,levels=rev(rs$variable)))%>%ggplot(aes(x=r,y=variable))+geom_col()+theme_classic(base_size = 16)+labs(x="R-squared %",y="")
+
+p0<-plot_grid(get_panel(sf2),get_legend(sf2),NULL,get_panel(sf4),get_legend(sf4),
+              ncol=5,rel_widths = c(.3,.2,.1,.3,.1),labels = c('b','','','d',''))
+p0<-plot_grid(plot_grid(NULL,sf1,NULL,nrow=3,rel_heights = c(.05,.9,.05)),
+              NULL,p0,ncol=3,rel_widths = c(.25,.05,.7),labels = c('a','',''))
+
+p2<-plot_grid(sf5,sf7,sf9,ncol=3,labels = c('e','f','g'),align = 'h',rel_widths = c(.55,.12,.33))
+p2<-plot_grid(p2,plot_grid(lgd5,NULL,rel_widths = c(.8,.2)),nrow=2,rel_heights = c(.9,.1))
+
+ggsave("m_fig1.pdf",height = 13,width=13,device = cairo_pdf,
+       plot=plot_grid(p0,p1,p2,nrow = 3,rel_heights = c(.3,.35,.35),labels = c('','c','')))
+
+ggsave("supp_fig1.pdf",height = 6,width=13,device = cairo_pdf,
+       plot=plot_grid(sf6,sf8,rel_widths = c(.2,.8),labels=c('a','b')))
+save(sf1,sf2,sf3,sf3A,sf4,sf5,sf6,sf7,sf8,sf9,file = "docs/figure1.Rdata")
+```
+
+
+# Different figure
+
+```{r}
+files<-list.files("scDRS",full.names = T)
+files<-files[str_detect(files,"\\.score.gz")]
+files<-files[-2]#drop merged file, check manually
+scdrs<-lapply(files,read_tsv)
+names(scdrs)<-str_remove_all(files,"scDRS/|.score.gz")
+scdrs<-lapply(names(scdrs),function(x) scdrs[[x]]%>%mutate(trait=x))%>%bind_rows()
+colnames(scdrs)[1]<-"barcode"
+scdrs<-sc@meta.data%>%rownames_to_column("barcode")%>%
+  select(group_major_plus_immune,barcode,Class,Stage.y)%>%
+  left_join(scdrs,by="barcode")
+
+plot_df<-scdrs%>%
+  drop_na()%>%filter(trait!="endometriosis")%>%
+  group_by(trait,group_major_plus_immune)%>%
+  summarise(total=n(),
+            signi=sum(mc_pval<0.05),
+            prop=100*signi/total,
+            score=mean(norm_score))
+
+files<-list.files("scDRS",full.names = T)
+files<-files[str_detect(files,"group_harmonized")]
+group<-lapply(files, read_tsv)
+names(group)<-str_remove_all(files,"scDRS/|.scdrs_group.group_harmonized_major_plus_immune")
+group<-lapply(names(group),function(x) 
+  group[[x]]%>%mutate(trait=x))%>%bind_rows()
+colnames(plot_df)[2]<-"group"
+plot_df<-plot_df%>%merge(group,by=c("trait","group"))
+
+plot_df<-plot_df%>%
+  mutate(group=factor(group,levels=rev(c(cell_order1$altImmCl,
+                                         cell_order$harmonized_major_cell_type[cell_order$type=="non"]))))
+plot_df$trait=str_replace_all(plot_df$trait,'_',' ')%>%
+           str_replace("hg","high grade")%>%
+           str_replace("clearcell","clear cell")%>%
+           str_replace("abdo pelvic","abdominal and pelvic")
+traits<-list(A=c("arthritis","asthma","IBS","osteoarthritis"),
+              B=c("abdominal and pelvic pain","back pain","dorsalgia","headache","pain"),
+              C=c("clear cell","endometroid","high grade","hormone-sensitive cancers"),
+              D=c("uterine fibroids","menopause age"),
+              E="height")
+traits<-traits%>%reshape2::melt()
+plot_df<-plot_df%>%mutate(trait=factor(trait,levels=traits$value))
+
+
+sf7<-plot_df%>%mutate(asso=ifelse(assoc_mcp<0.05,T,F))%>%
+  ggplot(aes(y=group,x=trait,size=prop,fill=score,colour=asso))+
+  geom_point(pch=21)+
+  scale_fill_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+  scale_colour_manual(values=c("white","black"))+
+  scale_shape_manual(values=16)+
+  geom_text(data=plot_df%>%mutate(hetero=ifelse(hetero_mcp<0.05,'X','')),
+            aes(y=group,x=trait,size=prop,label=hetero),col="black",show.legend = F)+
+  labs(x="",y="",size="significant %")+
+  theme_classic(base_size = 16)+
+  theme(axis.text.x = element_text(angle=90,vjust = .5,hjust = 1),
+        legend.position = "bottom")+
+  guides(colour="none")
+
+sf8<-plot_df%>%filter(trait=="IBS")%>%
+  ggplot(aes(y=group,x=total))+
+  geom_bar(stat="identity")+
+  theme_classic(base_size = 16)+
+  theme(axis.text.x = element_text(angle=90))
+p1<-plot_grid(get_panel(sf7),get_panel(sf8),rel_widths = c(.7,.3))
+p2<-plot_grid(get_x_axis(sf7),get_x_axis(sf8),rel_widths = c(.7,.3))
+p1<-plot_grid(p1,p2,nrow=2)
+p2<-plot_grid(get_y_axis(sf7),NULL,nrow = 2)
+p1<-plot_grid(p2,p1,ncol=2,rel_widths = c(.35,.65))
+sf7<-plot_grid(p1,NULL,get_legend(sf7),nrow=3,rel_heights = c(.9,-.2,.1))
+
+```
+

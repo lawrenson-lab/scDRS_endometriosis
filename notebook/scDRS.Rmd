@@ -1,0 +1,210 @@
+---
+title: "scDRS"
+output: html_notebook
+---
+
+#https://www.sciencedirect.com/science/article/pii/S2666166721007899#bbib4
+### SNP-gene annotation
+```{bash}
+wget https://github.com/endeneon/MAGMA_analysis_protocol/blob/main/data_files/Rev.NCBI37.3.gene.loc
+wget https://ctg.cncr.nl/software/MAGMA/ref_data/g1000_eur.zip
+unzip g1000_eur.zip 
+
+#endo gwas
+wget http://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST90205001-GCST90206000/GCST90205183/GCST90205183_buildGRCh37.tsv.gz
+gunzip -d GCST90205183_buildGRCh37.tsv.gz
+
+```
+### separate chromosomes works faster???
+```{bash}
+wget https://ftp.ncbi.nih.gov/snp/organisms/human_9606_b151_GRCh37p13/VCF/00-All.vcf.gz 
+
+awk 'BEGIN { FS="\t"; OFS="\t" } { $2=$2 "\t" $2 } 1' GCST90205183_buildGRCh37.tsv>temp
+bedtools sort -i temp>temp1
+for i in {1..22};do grep -P '^'$i'\t' temp1>$i.bed;done
+for x in {1..22};do bedtools intersect -a $x.bed -b 00-All.vcf.gz -wa -wb -sorted -g GRCh37.genome>$x.sorted.bed;done
+#       Please rerun with the -g option for a genome file.
+
+./magma --annotate window=100,20 --snp-loc ./g1000_eur.bim --gene-loc ./Rev.NCBI37.3.gene.loc --out out/annot_100kb_20K
+#there is no universally agreed value in setting the size of the sliding window, users are recommended to check related published results 
+### MAGMA Gene sets
+./magma --bfile ./g1000_eur --pval /media/Data04/public_data/GWAS/ovarian_cancer/endometroid.tsv use='ID,PVALUE' N=107853 --gene-annot out/annot_100kb_20K.genes.annot --out out/endometroid
+./magma --bfile ./g1000_eur --pval /media/Data04/public_data/GWAS/ovarian_cancer/hg.tsv use='ID,PVALUE' N=121312 --gene-annot out/annot_100kb_20K.genes.annot --out out/hg
+
+```
+
+```{r}
+#library(sceasy)
+#library(reticulate)
+#use_condaenv('sc_endo')
+#loompy <- reticulate::import('loompy')
+
+#sc<-readRDS("data/fixed_annotated_aux.seurat.rds")
+#convertFormat(sc, from="seurat", to="anndata",
+#                       outFile='data/fixed_anno.h5ad')
+```
+
+
+```{bash}
+bash formunge.sh back_pain back_pain.genes.out
+#####
+#echo $1|perl -pe 's/^/\t/'>scDRS/temp.tsv
+#awk -vOFS="\t" '{print $1,$8}' magma_files/out/$2|tail -n +2 >>scDRS/temp.tsv
+#scdrs munge-gs --zscore-file scDRS/temp.tsv --weight zscore --n-max 1000 --out-file scDRS/temp.gs
+#cat scDRS/temp.gs>>scDRS/endo-associatedGWAS_alt.gs
+####
+for x in $(ls magma_files/out/|grep 'out'|grep -P -v 'gs|GCST'|perl -pe 's/.genes.out//');do bash formunge.sh $x $x.genes.out;done
+
+#single cell
+scdrs compute-score \
+    --h5ad-file data/fixed_anno.h5ad\
+    --h5ad-species human\
+    --gs-file scDRS/endo-associatedGWAS_alt.gs\
+    --gs-species human\
+    --out-folder scDRS\
+    --flag-raw-count False\
+    --flag-return-ctrl-norm-score True\
+    &>log&
+    
+scdrs perform-downstream \
+    --h5ad-file data/fixed_anno.h5ad\
+    --score-file scDRS/endometriosis.full_score.gz\
+    --out-folder scDRS/\
+    --group-analysis Class\ \
+#    --gene-analysis
+
+```
+
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(cowplot)
+library(ComplexHeatmap)
+library(circlize)
+
+files<-list.files("scDRS",full.names = T)
+files<-files[str_detect(files,"\\.score.gz")]
+scdrs<-lapply(files,read_tsv)
+names(scdrs)<-str_remove_all(files,"scDRS/|.score.gz")
+scdrs<-lapply(names(scdrs),function(x) scdrs[[x]]%>%select(c(1,3,4))%>%mutate(trait=x))%>%bind_rows()
+colnames(scdrs)[1]<-"barcode"
+
+temp<-scdrs%>%select(-mc_pval)%>%pivot_wider(names_from = trait,values_from = norm_score)
+sc <- readRDS("data/fixed_annotated_aux.seurat.rds")
+sc@meta.data<-sc@meta.data%>%rownames_to_column("barcode")%>%left_join(temp,by="barcode")%>%column_to_rownames("barcode")
+p1<-FeaturePlot(sc,features = "hg",raster = F)+scale_color_gradient2(low = "white",mid='gray',high = "red")
+p2<-FeaturePlot(sc,features = "clearcell",raster = F)+scale_color_gradient2(low = "white",mid='gray',high = "red")
+p3<-FeaturePlot(sc,features = "endometroid",raster = F)+scale_color_gradient2(low = "white",mid='gray',high = "red")
+p4<-FeaturePlot(sc,features = "abdo_pelvic_pain",raster = F)+scale_color_gradient2(low = "white",mid='gray',high = "red")
+p5<-FeaturePlot(sc,features = "menopause_age",raster = F)+scale_color_gradient2(low = "white",mid='gray',high = "red")
+p6<-FeaturePlot(sc,features = "height",raster = F)+scale_color_gradient2(low = "white",mid='gray',high = "red")
+p7<-DimPlot(sc,raster = F)
+
+plot_df<-sc@meta.data%>%select(harmonized_major_plus_immune_cell_type,names(temp)[-1])%>%
+  pivot_longer(-1,names_to = "trait",values_to = "scdrs")
+plot_df%>%ggplot(aes(x=scdrs,y=harmonized_major_plus_immune_cell_type))+geom_violin()+facet_wrap(~trait,ncol=7)+theme_classic(base_size = 16)+theme(strip.background = element_blank())+ylab("")+geom_vline(xintercept = 0,col="red")
+
+i<-unlist(lapply(unique(sc$harmonized_major_plus_immune_cell_type), function(x) sample(which(sc$harmonized_major_plus_immune_cell_type==x),100)))
+temp<-sc@meta.data[i,c(unique(scdrs$trait),"harmonized_major_plus_immune_cell_type","Menstral_cycle","Class")]
+temp<-temp%>%drop_na()%>%arrange(harmonized_major_plus_immune_cell_type)
+Heatmap(temp[,1:11],right_annotation = rowAnnotation(class=temp$Class,cycle=temp$Menstral_cycle),show_row_names = F,show_column_dend = F,cluster_rows = F,name="scDRS",col=colorRamp2(c(-5,0,5), c("#2166ac","#f7f7f7","#b2182b")),row_split = temp$harmonized_major_plus_immune_cell_type,row_title_rot=0,border=T)
+
+
+aux_table<-sc@meta.data%>%rownames_to_column("barcode")
+scdrs<-aux_table%>%select(Final_Immune_Cluster_ID,Immune_Cluster_ID,Parent_immune_cluster,Master_Assigned_Cell_Type,barcode,Class)%>%right_join(scdrs,by="barcode")
+plot_df<-scdrs%>%filter(Class=="Peritoneal endometriosis")%>%group_by(harmonized_major_plus_immune_cell_type,trait)%>%summarise(total=n(),significant=sum(mc_pval<0.05))%>%filter(harmonized_major_plus_immune_cell_type!="Exclude")
+plot_df<-plot_df%>%mutate(prop=100*significant/total)
+temp<-plot_df%>%select(-c(total,significant))%>%pivot_wider(names_from = trait,values_from = prop)%>%column_to_rownames("harmonized_major_plus_immune_cell_type")
+Heatmap(as.matrix(temp),name="Prop. of sig. cells",col=colorRamp2(c(0,50,100), c("#EDD9A3","#F2637F","#4B2991")),cluster_rows = F,cluster_columns = F,right_annotation = rowAnnotation(total=anno_barplot(plot_df%>%ungroup%>%distinct(harmonized_major_plus_immune_cell_type,total)%>%select(total))),column_title = "Peritoneal endometriosis")  
+#sc1<-subset(sc,cells=which(sc$harmonized_major_cell_type=="Myeloid cells"))
+#p1<-DimPlot(sc1)
+#p2<-FeaturePlot(sc1,features = "endometriosis",raster = F)+scale_color_gradient2(low = "white",mid='gray',high = "red")
+
+```
+
+## compare asthma, IBS, arthritis
+```{r}
+genesets<-list(read_tsv("scDRS/endo-associatedGWAS.gs"),
+               read_tsv("scDRS/height.gs"),
+               read_tsv("scDRS/endo.gs"))
+genesets<-lapply(genesets,function(x) x%>%separate_rows(GENESET,sep=',')%>%separate(GENESET,into = c("gene","gwas_score"),sep = ':'))%>%bind_rows
+genesets%>%split(genesets$TRAIT)%>%lapply(function(x) x$gene)%>%make_comb_mat()%>%UpSet()
+
+#genesets<-genesets%>%split(genesets$TRAIT)
+#sc<-AddModuleScore(sc,features = genesets,name = names(genesets))
+
+Idents(sc)<-sc$harmonized_major_plus_immune_cell_type
+p<-DotPlot(sc,features = unique(genesets$gene))
+genesets<-genesets%>%split(genesets$TRAIT)%>%
+  lapply(function(x) x%>%right_join(p$data,by=c("gene"="features.plot")))
+genesets<-genesets%>%bind_rows()%>%mutate(score=as.numeric(gwas_score)*avg.exp.scaled)
+
+i<-genesets%>%group_by(TRAIT,id)%>%top_n(score,n = 1)%>%ungroup%>%distinct(TRAIT,gene)
+i<-i%>%split(i$TRAI)
+lapply(i,function(x) genesets%>%filter(gene%in%x$gene&TRAIT==x$TRAIT)%>%ggplot(aes(x=gene,y=id,col=score,size=pct.exp))+geom_point(stroke=0)+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+ggtitle(x$TRAIT[1])+theme_classic(base_size = 16)+theme(axis.text.x = element_text(angle=90))+scale_size(breaks = c(0,25,50,100)))
+
+
+
+```
+
+## Functional enrichment of gs
+```{r}
+#cut -f2 scDRS/endo.gs|perl -pe 's/,/\n/g'>temp
+library(tidyverse)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+#library(ReactomePA)
+#library(DOSE)
+
+magma_genes<-readLines("temp")
+magma_genes<-magma_genes%>%str_remove(":.+")
+ids <- bitr(magma_genes, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+
+#pathways<- enrichPathway(gene=ids$ENTREZID, pvalueCutoff = 0.05, readable=TRUE) #NO PATHWAYS
+#disease <- enrichDO(gene = ids$ENTREZID,ont= "DO",qvalueCutoff  = 0.05,readable= T)# NO DISEASES
+disease <- enrichDGN(ids$ENTREZID)
+go <- enrichGO(gene= ids$ENTREZID,OrgDb= org.Hs.eg.db,ont= "BP",qvalueCutoff  = 0.05,readable      = TRUE)
+
+```
+
+```{bash}
+Rscript script/tan_label_transfer.R &>log &
+```
+
+```{r}
+library(networkD3)
+library(tidyverse)
+
+tan<-readRDS("data/public_endo/Endometriosis/Tan2022/endo-2022_global_label_transfer.rds")
+
+tan<-tan@meta.data
+gc()
+plot_df<-tan%>%count(celltype,predicted.id)%>%mutate(celltype=str_replace(celltype,' ','-'))
+node_df<-plot_df%>%pivot_longer(-n,names_to = "type",values_to = "label")%>%select(-n)%>%arrange(type)%>%unique
+node_df<-node_df%>%mutate(index=1:nrow(node_df))%>%column_to_rownames("index")
+plot_df$celltype<-match(plot_df$celltype,node_df$label)-1
+plot_df$predicted.id<-match(plot_df$predicted.id,node_df$label)-1
+
+sankeyNetwork(Links = plot_df, Nodes = node_df,
+              Source = "celltype", Target = "predicted.id",
+              Value = "n", NodeID = "label",
+              nodeWidth=60, fontSize=26, nodePadding=30)
+```
+
+## group analysis
+```{r}
+group_res<-read_tsv("scDRS/endometriosis.scdrs_group.group_harmonized_major_plus_immune")
+group_res%>%ggplot(aes(y=group,x=n_cell,size=assoc_mcp,col=hetero_mcz))+geom_point()+scale_size(range=c(8,1),breaks = c(0.05,0.12,0.25,0.5,1))
+group_res%>%ggplot(aes(x=assoc_mcp,y=hetero_mcp,size=n_cell))+geom_point()+geom_text_repel(data=group_res%>%filter(assoc_mcp<0.05|hetero_mcp<0.05),aes(x=assoc_mcp,y=hetero_mcp,label=group),size=5)
+```
+
+## plot cli group test results
+```{r}
+files<-list.files("scDRS",full.names = T)
+files<-files[str_detect(files,"group_harmon")]
+res<-lapply(files,read_tsv)
+res<-lapply(1:length(files),function(x) res[[x]]%>%mutate(trait=str_remove_all(files[x],"scDRS/|\\..+")))%>%bind_rows()
+res%>%filter(group!="Exclude")%>%ggplot(aes(x=trait,y=group,col=hetero_mcp,size=assoc_mcp))+geom_point()+scale_size(range=c(5,1),breaks=c(1,0.1,0.01))+theme_classic(base_size = 16)+theme(axis.text.x = element_text(angle=90))
+
+```

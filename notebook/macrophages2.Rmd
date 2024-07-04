@@ -1,0 +1,266 @@
+---
+title: "scDRS genes"
+output: html_notebook
+---
+
+
+```{r}
+library(Seurat)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+library(cowplot)
+library(clusterProfiler)
+library(ReactomePA)
+library(msigdbr)
+library(ggridges)
+
+sc<-readRDS("data/fixed_annotated_aux.seurat.rds")
+sc<-subset(sc,cells = which(!sc$harmonized_major_cell_type%in%c("Exclude","Erythrocytes")))
+sc@meta.data<-sc@meta.data%>%
+  mutate(group_major_plus_immune=str_replace(harmonized_major_plus_immune_cell_type,"Memmory","Memory")%>%
+           str_replace("Gamma-Delta","γδ")%>%
+           str_replace("Cells","cells")%>%
+           str_remove(" \\(.+"))
+aux_table<-sc@meta.data
+```
+# scDRS correlated genes
+```{r}
+#genes<-read_tsv("scDRS/endometriosis.scdrs_gene")
+#colnames(genes)[1]<-"gene"
+#genes%>%ggplot(aes(x=RANK,y=CORR))+geom_point()+geom_text_repel(data=genes%>%slice_max(abs(CORR),n=10),aes(x=RANK,y=CORR,label=gene),force = 5,min.segment.length = .1)+theme_classic(base_size = 16)
+
+#check just the genes used for the scDRS
+magma_genes<-read_table("magma_files/out/endo.gs.genes.out")
+
+###########NO FUNCTIONAL ENRICHMETN######
+#id = bitr(genes$GENE, fromType="SYMBOL", toType="ENTREZID", OrgDb="org.Hs.eg.db")
+#genes<-genes%>%inner_join(id,by=c("GENE"="SYMBOL"))
+#rank<-genes%>%arrange(desc(ZSTAT))%>%dplyr::select(ENTREZID,ZSTAT)%>%deframe()
+#gseaRes <- gsePathway(rank, 
+#                pvalueCutoff = 0.01,
+#                pAdjustMethod = "fdr", 
+#                verbose = FALSE)
+#all enriched pathways have negative NES
+magma_genes<-magma_genes%>%slice_max(order_by = ZSTAT,n=1000)
+m_df <- msigdbr(species = "Homo sapiens")%>%
+  filter(str_detect(gs_subcat,"CP"))%>%
+  distinct(gs_name,gene_symbol)
+#oraRes<-enricher(gene=magma_genes$GENE, 
+#                 pvalueCutoff = 0.05,
+#                 TERM2GENE =m_df)#no enrichment
+
+
+############GENES PER CLUSTER#####################
+i<-c("Dendritic cells","Macrophages M2","Endothelial cells")
+scores<-read_tsv("scDRS/endometriosis.score.gz")
+colnames(scores)[1]<-"barcode"
+scores<-scores%>%drop_na()
+
+#expression per ct of interest
+subsc<-lapply(i, function(x) 
+  subset(sc,cells=which(sc$group_major_plus_immune==x&colnames(sc)%in%scores$barcode)))
+names(subsc)<-i
+#sc<-lapply(sc, function(x) subset(x,features=genes))
+subsc<-lapply(subsc, function(x) x@assays$SCT$counts)
+
+subscores<-lapply(i, function(x) 
+  scores%>%filter(barcode%in%colnames(subsc[[x]])))
+names(subscores)<-i
+
+corres<-lapply(i,function(y) #improve coz it's sloooow
+  apply(subsc[[y]],1,function(x)
+    cor.test(as.numeric(x),
+             subscores[[y]]$norm_score,method = "spearman")[c("p.value","estimate")]))
+corres<-lapply(corres, function(x) lapply(x,cbind)%>%as.data.frame()%>%t)
+corres<-lapply(1:3,function(x) 
+  corres[[x]]%>%as.data.frame%>%rownames_to_column("gene")%>%mutate(cell_type=i[x]))%>%bind_rows()
+corres<-corres%>%mutate(padj=p.adjust(p.value,"fdr"),
+                        sign=ifelse(estimate>0,"+","-"))
+write_tsv(corres,"docs/per_group_gene_corr.tsv")
+
+sf1<-corres%>%drop_na()%>%ggplot(aes(x=cell_type,y=estimate))+geom_boxplot()+
+  geom_text_repel(data = corres%>%group_by(cell_type)%>%slice_max(estimate,n=3),
+                  aes(x=cell_type,y=estimate,label=gene),force_pull = .3)+
+  theme_classic(base_size = 14)+labs(y="spearman correlation",x="")+
+  theme(axis.text.x = element_blank(),
+        axis.line.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+temp<-corres%>%drop_na()%>%mutate(cluster=paste0(cell_type,'_',sign))
+temp<-temp%>%split(temp$cluster)%>%lapply(function(x) x%>%distinct(gene)%>%unlist)
+oraRes<-lapply(temp,function(x) enricher(gene=x,TERM2GENE = m_df)%>%as.data.frame)
+oraRes<-lapply(names(oraRes),function(x) oraRes[[x]]%>%mutate(cluster=x)%>%separate(cluster,into = c("cell_type","sign"),sep = '_'))%>%bind_rows()
+oraRes%>%write_tsv("docs/M2_scDRS_corr_ora.tsv")
+
+temp<-oraRes%>%filter(str_detect(ID,"REACTOME"))%>%
+  mutate(ID=str_remove(ID,"REACTOME_")%>%
+           str_replace_all("_"," ")%>%
+           str_to_sentence()%>%
+           str_replace("tp53","TP53")%>%
+           str_replace("gtp","GTP")%>%
+           str_replace("gfr","GFR")%>%
+           str_replace("i mhc","I MHC")%>%
+           str_replace("growth factor receptors","\nGFR")%>%
+           str_replace("proces","\nproces"),
+         sign=ifelse(sign=="pos","positive","negative"))%>%
+  group_by(cell_type)%>%slice_max(Count,n=5)
+sf2<-temp%>%ggplot(aes(x=cell_type,y=ID,fill=p.adjust,col=p.adjust,size=Count,shape=sign))+
+  geom_point(aes(col=p.adjust),show.legend = F)+
+  scale_shape_manual(values=25:24)+
+  theme_classic(base_size = 14)+
+  theme(axis.text.x = element_text(angle=45,vjust =1,hjust = 1,size = 13),
+        legend.box = "vertical")+labs(x="",y="Pathway",shape="",col="P-val")
+
+```
+
+# Heterogeneity
+```{r}
+j<-c("Dendritic cells","Macrophages M2","Endothelial cells","Plasmablast/Plasma cells")#all ct with significant heterogeneity
+#sc <- Seurat::ScaleData(sc, assay = "progeny")
+#progeny_scores_df <- 
+#     as.data.frame(t(GetAssayData(sc, slot = "scale.data",assay = "progeny"))) %>%
+#     rownames_to_column("Cell") %>%
+#     gather(Pathway, Activity, -Cell)
+
+progeny<-read_tsv("docs/progeney_scores.tsv")
+progeny<-aux_table%>%rownames_to_column("barcode")%>%
+  distinct(barcode,group_major_plus_immune,Class)%>%
+  left_join(progeny,by=c("barcode"="Cell"))%>%
+  filter(group_major_plus_immune%in%j)
+progeny<-progeny%>%left_join(scores,by="barcode")
+
+# binned pathways plots
+temp<-progeny%>%
+  pivot_longer(cols = Androgen:WNT,names_to = "pathway",values_to = "progeny_score")%>%
+  drop_na()
+temp<-temp%>%group_by(pathway)%>%mutate(box=cut(progeny_score,breaks=10,labels=F))%>%ungroup
+temp<-temp%>%group_by(pathway,box,group_major_plus_immune)%>%
+summarise(activity=median(progeny_score),avg_score=mean(norm_score),size=n())%>%
+ungroup()%>%distinct()%>%mutate(pathway=str_replace(pathway,"NFkB","NFκB")%>%
+         str_replace("TGFb","TGFβ")%>%
+         str_replace("TNFa","TNFα"))
+#paths<-unique(temp$pathway)
+#lapply(paths,function(x) {subtemp<-temp%>%filter(pathway==x);cor.test(subtemp$activity,subtemp$avg_score,method="spearman")})
+
+#sf3<-temp%>%ggplot(aes(x=activity,y=avg_score,group=group_major_plus_immune,color=group_major_plus_immune))+
+#geom_point(aes(size=size))+geom_line()+facet_wrap(~pathway,scales="free_x")+
+#theme_classic(base_size=16)+labs(color="cell type",size="cells",y="average scDRS")+
+#theme(strip.background=element_blank(),legend.position = c(.75, .05),legend.box="horizontal")+scale_color_grey()
+
+sf3<-temp%>%filter(pathway%in%c("NFkB","PI3K","TGFb","TNFa"))%>%
+  ggplot(aes(x=activity,y=avg_score,group=group_major_plus_immune,color=group_major_plus_immune))+
+    geom_point(aes(size=size))+geom_line()+facet_wrap(~pathway,scales="free_x",nrow = 3)+
+    theme_classic(base_size=16)+labs(color="cell type",size="cells",y="average scDRS")+
+    theme(strip.background=element_blank(),
+          legend.position = "bottom",legend.box = "vertical")+
+  scale_color_manual(values=c("#fdae61","skyblue2","#dbf06a","#d53e48"))+
+  guides(col=guide_legend(nrow=2))+labs(col="",x="Activity",y="Average scDRS",size="Cell")
+
+```
+
+## dotplot of IL1 region
+```{r}
+library(biomaRt)
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl")
+genes <- getBM(attributes=c('external_gene_name',
+                            'chromosome_name',
+                            'start_position',
+                            'end_position',
+                            'gene_biotype'),
+               filters ='chromosome_name', values ="2",
+               mart = ensembl)
+genes<-genes%>%filter(start_position>112274048&start_position<113274048)#500k around 112774048
+#500k around 112774048
+
+i<-genes%>%distinct(external_gene_name)%>%unlist
+names(i)<-NULL
+i<-i[i%in%rownames(sc)]
+#i<-c("ZC3H6","RGPD8","TTL","POLR1B","CHCHD5","SLC20A1","NT5DC4","CKAP2L","IL1A","IL1B","IL37","IL36G","IL1RN",   "PSD4","PAX8")
+
+immune<-subset(sc,cells=which(!is.na(sc$Final_Immune_Cluster_ID)))
+cell_order1<-immune@meta.data%>%
+  mutate(harmonized_major_cell_type=ifelse(str_detect(group_major_plus_immune,"Early"),
+                                           "T cells",
+                                           harmonized_major_cell_type))%>%
+  count(harmonized_major_cell_type,group_major_plus_immune)
+cell_order1<-cell_order1[c(1,7,2:6,8,11,9,10,12:15),]
+
+
+Idents(immune)<-factor(immune$group_major_plus_immune,levels = rev(cell_order1$group_major_plus_immune))
+
+sf4<-DotPlot(immune,features = i)+
+  RotatedAxis()+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+  labs(x="Gene",y="")+
+  guides(color = guide_colorbar(title = "Average\nexpression"),
+         size=guide_legend(title="Percent\nexpressed"))
+#ggsave("m_fig2_dp.pdf",height = 5,width=8,device = cairo_pdf,plot=p)
+
+
+
+library(Gviz)
+library(GenomicRanges)
+itrack <- IdeogramTrack(chromosome = 2,genome = "hg38",name = "Chr2 (q14.1)",fontsize=12)
+gtrack <- GenomeAxisTrack()
+genes<-genes%>%filter(external_gene_name!=""&gene_biotype=="protein_coding")%>%
+  arrange(start_position)%>%
+  mutate(gene_length=end_position-start_position,
+         color=ifelse(external_gene_name%in%c("IL1A","IL1B","IL1RN"),"#b2182b","#2166ac"))
+aTrack <- AnnotationTrack(start = genes$start_position, width = genes$gene_length, 
+                          chromosome = "chr2",background.title="white",
+                          group = genes$external_gene_name,fontface.group=3,
+                          genome = "hg38", name = "",fill=genes$color)
+sf4A<-grid.grabExpr(plotTracks(list(itrack,gtrack,aTrack),from = 112274048,to=113274048,
+           shape = "box",just.group = "above",fontcolor="black",
+           fontcolor.group="black",groupAnnotation="group",
+           fontsize.group=15,sizes = c(.1,.1,.8),stackHeight=0.25)) 
+sf4<-plot_grid(sf4A,NULL,sf4,nrow=3,rel_heights = c(.5,.05,.45))
+```
+
+```{r}
+eqtl<-read_tsv("docs/st3.tsv")
+eqtl<-eqtl%>%
+  filter(Gene%in%i)%>%
+  mutate(Gene=factor(Gene,levels=i),
+         Tissue=str_replace_all(Tissue,'_'," ")%>%
+           str_replace("Sun Exposed Lower leg","sun exposed lower leg")%>%
+           str_replace("Not Sun Exposed Suprapubic","not sun exposed suprapubic")%>%
+           str_replace("Cell","cell")%>%
+           str_replace("memo","Memo"),
+         Effect=ifelse(Risk_Allele_Effect=="pos","positive","negative"))
+sf5<-eqtl%>%ggplot(aes(x=Gene,y=Tissue,shape=Effect,size=as.numeric(P)))+
+    geom_point(fill="darkgray",col="darkgray")+scale_size_continuous(trans = "log10")+
+    theme_classic(base_size = 14)+theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+    scale_shape_manual(values =25:24)+scale_size(range=c(6,1))+
+    labs(y="Tissue cell type",size="P-val")
+
+
+p0<-plot_grid(sf1,NULL,sf2,labels = c('a','','b'),nrow=3,rel_heights = c(.5,-.07,.5),align = 'v')
+p0<-plot_grid(p0,sf3,rel_widths = c(.4,.6),labels = c('','c'))
+p1<-plot_grid(sf4,sf5,labels=c('d','e'),rel_widths = c(.55,.45))
+ggsave("m_fig2.pdf",height = 15,width = 15,device = cairo_pdf,plot_grid(p0,p1,nrow=2))
+
+ggsave("supp_fig2.pdf",width = 10,height = 10,sup1)
+
+```
+
+#############FOR ANOTHER QUESTION###################
+#temp<-aux_table%>%
+#  count(Class,group_major_plus_immune)%>%
+#  filter(str_detect(group_major_plus_immune,"phage"))%>%
+#  group_by(Class)%>%mutate(total=sum(n),prop=100*n/total)%>%
+#  mutate(prop=ifelse(str_detect(group_major_plus_immune,"M1"),prop,-prop))
+#sf5<-temp%>%mutate(Class=factor(Class,levels = c("Unaffected ovary",
+#                                                 "Endometrioma",
+#                                                 "Eutopic endometrium",
+#                                                 "Peritoneal endometriosis")))%>%
+#  ggplot(aes(x=prop,y=Class,fill=group_major_plus_immune))+geom_col()+
+#  scale_fill_manual(values=c("grey","grey2"))+
+#  scale_x_continuous(breaks = pretty(temp$prop),labels=abs(pretty(temp$prop)))+
+#  theme_classic(base_size = 16)+
+#  theme(legend.position = "none",axis.line.y = element_blank(),
+#        axis.ticks.y = element_blank())+labs(x="%",y="")+ 
+#  annotate("text",x = -110, y = .5, col="black",label="M2",size=5)+
+#  coord_cartesian(xlim = c(-100, 40),  clip = 'off',expand = T)+
+#  annotate("text",x = 45, y = .5, col="black",label="M1",size=5)
+#

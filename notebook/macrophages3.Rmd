@@ -1,0 +1,271 @@
+---
+title: "Fig3"
+output: html_notebook
+---
+
+
+```{r}
+library(CellChat)
+library(ComplexHeatmap)
+library(circlize)
+library(tidyverse)
+library(ggplot2)
+library(cowplot)
+library(ggsankey)
+library(ggrepel)
+```
+```{r}
+sc<-readRDS("data/fixed_annotated_aux.seurat.rds")
+sc<-subset(sc,cells = which(!sc$harmonized_major_cell_type%in%c("Exclude","Erythrocytes")))
+sc@meta.data<-sc@meta.data%>%
+  mutate(group_major_plus_immune=str_replace(harmonized_major_plus_immune_cell_type,"Memmory","Memory")%>%
+           str_replace("Gamma-Delta","γδ")%>%
+           str_replace("Cells","cells")%>%
+           str_remove(" \\(.+"))
+aux_table<-sc@meta.data
+
+```
+
+```{r}
+cell_chat_data <- readRDS("data/combined/CellChat_all.rds")
+df.net <- subsetCommunication(cell_chat_data)
+df.net<-df.net%>%mutate(source=str_replace(source,"Memmory","Memory")%>%str_replace("Gamma-Delta","γδ")%>%str_replace("Cells","cells"),
+                        target=str_replace(target,"Memmory","Memory")%>%str_replace("Gamma-Delta","γδ")%>%str_replace("Cells","cells"))
+df.net<-df.net%>%filter(source!="Erythrocytes"&target!="Erythrocytes")
+
+cell_order<-aux_table%>%distinct(harmonized_major_cell_type)%>%
+    mutate(type=ifelse(str_detect(harmonized_major_cell_type,
+                                  "B|Mast|Myel|NK|Plas|T"),"immune","non"))%>%
+    arrange(type,harmonized_major_cell_type)
+cell_order<-cell_order[c(1,5,2:4,6:nrow(cell_order)),]
+cell_order1<-aux_table%>%filter(!is.na(Final_Immune_Cluster_ID))%>%
+  mutate(harmonized_major_cell_type=ifelse(str_detect(group_major_plus_immune,"Early"),
+                                           "T cells",
+                                           harmonized_major_cell_type))%>%
+  count(harmonized_major_cell_type,group_major_plus_immune)
+cell_order1<-cell_order1[c(1,7,2:6,8,11,9,10,12:15),]
+```
+
+```{r}
+temp<-df.net%>%count(source)
+colnames(temp)<-c("cell_type","out")
+temp<-df.net%>%count(target)%>%mutate(cell_type=target,`in`=n)%>%
+  select(cell_type,`in`)%>%inner_join(temp,by = "cell_type")
+temp<-sapply(temp$cell_type,function(x) df.net%>%filter(source==x&target==x)%>%nrow)%>%as.data.frame()%>%rownames_to_column("cell_type")%>%
+  inner_join(temp,by="cell_type")
+colnames(temp)[2]<-"auto"
+temp<-temp%>%mutate(type=ifelse(cell_type%in%cell_order1$group_major_plus_immune,
+                                "Immune","Non-immune"),
+                    across(`in`:out,function(x) x-auto))
+temp<-aux_table%>%count(group_major_plus_immune)%>%
+  mutate(Cells=n)%>%select(-n)%>%
+  inner_join(temp,by=c("group_major_plus_immune"="cell_type"))
+temp1<-lapply(temp$group_major_plus_immune, function(x)
+    df.net%>%filter(source==x|target==x)%>%
+        pivot_longer(source:target,names_to = "position",values_to = "partner")%>%
+        filter(partner!=x)%>%
+        mutate(type=ifelse(partner%in%cell_order1$group_major_plus_immune,"immune","non_immune"),cell_type=x)%>%
+        count(cell_type,type)%>%pivot_wider(names_from = type,values_from = n))%>%bind_rows()%>%
+  mutate(total=immune+non_immune,immune_prop=immune/total,immune_ratio=non_immune/immune)
+temp<-temp%>%inner_join(temp1,by=c("group_major_plus_immune"="cell_type"))
+sf7<-temp%>%
+  ggplot(aes(x=`in`,y=out,size=Cells,shape=type,col=non_immune))+
+  geom_point()+
+  scale_shape_manual(values =15:16)+scale_size(range=c(2,12))+
+  geom_text_repel(data=temp%>%filter(`in`>320|out>400)%>%
+  mutate(group_major_plus_immune=str_replace(group_major_plus_immune,"CD8","\nCD8")),
+                    aes(x=`in`+c(60,38,0,40),
+                        y=out+c(0,-.5,0,-8.3),
+                        label=group_major_plus_immune),
+                  size=5,col="black",min.segment.length = 200)+
+    theme_classic(base_size = 14)+
+    labs(x="Incoming",y="Outgoing",col="Non-immune\ninteractions",shape="")+
+    scale_color_viridis_c(option = 'C',direction = -1)+
+    guides(shape = guide_legend(override.aes = list(size = 5)))+
+    theme(legend.position = "bottom",legend.direction = "vertical")
+#alternative
+#temp<-df.net%>%filter(source!="Erythrocytes",target!="Erythrocytes")%>%
+#  group_by(source,target)%>%summarise(strength=sum(prob))%>%
+#  pivot_wider(names_from = target,values_from = strength)%>%
+#  column_to_rownames("source")
+#lala<-as.data.frame(cbind(label=rownames(temp)[row_order(hm)],split=c(rep(3,14),2,rep(1,6))))
+#lolo<-as.data.frame(cbind(label=colnames(temp)[column_order(hm)],split=c(rep(3,7),2,rep(1,13))))
+```
+
+```{r}
+temp1<-df.net%>%filter(target=="Macrophages M2")%>%
+    count(pathway_name,source)%>%
+    pivot_wider(names_from = pathway_name,values_from = n)%>%
+    mutate(across(-1,function(x) replace_na(x,0)))%>%
+    column_to_rownames("source")
+col_anno<-df.net%>%
+  filter(target=="Macrophages M2")%>%
+  distinct(pathway_name,interaction_name)%>%
+  count(pathway_name)
+temp1<-temp1[c(cell_order1$group_major_plus_immune,
+                cell_order$harmonized_major_cell_type[cell_order$type=="non"]),]
+sf8B<-Heatmap(temp1,name="outgoing\nligands",
+              col=colorRamp2(c(0,1,15), c("#0D0887FF","#CC4678FF","#F0F921ff")),
+              cluster_rows = F,cluster_columns = F,
+              column_title = "", row_names_side  = "left",show_heatmap_legend = F,
+              column_names_rot = 45,
+              right_annotation = rowAnnotation("total"=anno_barplot(rowSums(temp1),
+                                                                    border = F),
+                                               show_annotation_name=F),
+              top_annotation =HeatmapAnnotation("LR"=anno_barplot(col_anno$n,border = F),
+                                                show_annotation_name = F))
+sf8B<-grid.grabExpr(draw(sf8B))
+
+
+temp<-df.net%>%filter(source=="Macrophages M2")%>%
+  count(pathway_name,target)%>%
+  pivot_wider(names_from = pathway_name,values_from = n)%>%
+  mutate(across(-1,function(x) replace_na(x,0)))%>%
+  column_to_rownames("target")
+col_anno<-df.net%>%
+  filter(source=="Macrophages M2")%>%
+  distinct(pathway_name,interaction_name)%>%
+  count(pathway_name)
+temp<-temp[c(cell_order1$group_major_plus_immune,
+                cell_order$harmonized_major_cell_type[cell_order$type=="non"]),]
+sf8A<-Heatmap(temp,name="outgoing\nligands",col=colorRamp2(c(0,1,15), c("#0D0887FF","#CC4678FF","#F0F921ff")),
+        cluster_rows = F,cluster_columns = F,
+        column_title = "",show_row_names = F,
+        show_heatmap_legend = F,column_title_side = "bottom",
+        column_names_rot = 45,
+        right_annotation = rowAnnotation("total"=anno_barplot(rowSums(temp),border = F)),
+        top_annotation =HeatmapAnnotation("unique\nLR"=anno_barplot(col_anno$n,border = F)))
+sf8A<-grid.grabExpr(draw(sf8A))
+sf8<-plot_grid(sf8B,sf8A,rel_widths = c(.62,.38),labels = c('b','c'))
+lgd = Legend(at = c(0, 1, 15), col_fun = colorRamp2(c(0,1,15), c("#0D0887FF","#CC4678FF","#F0F921ff")), title = "ligands", title_position = "lefttop",labels_gp = gpar(fontsize=14),title_gp = gpar(fontsize = 16),direction = "horizontal",legend_width = unit(6, "cm"))
+sf8<-plot_grid(sf8,grid.grabExpr(draw(lgd)),nrow=2,rel_heights = c(.9,.1))
+```
+
+```{r}
+sp<-function(df_plot,cols){
+  df_plot%>%ggplot( aes(x = x,
+                   next_x = next_x,
+                   node = node,
+                   next_node = next_node,
+                   fill = factor(node),
+                   label = node))+
+    geom_sankey(flow.alpha = 0.5,show.legend = TRUE)+
+    geom_sankey_text(color = "black", hjust = 0.5)+  
+    theme_bw()+
+    theme_sankey(base_size = 14)+
+    theme(legend.position = "none")+
+    labs(x="")+scale_fill_manual(values = cols)}
+cols<-function(plot_df){
+  plot_df%>%
+    distinct(node)%>%
+    mutate(col=ifelse(node%in%cell_order1$group_major_plus_immune,"#fdae61","skyblue2"))%>%
+    deframe()}
+
+
+temp<-df.net%>%
+  filter(pathway_name=="TNF")%>%
+  make_long(source,ligand,receptor,target)
+spcols<-cols(temp)
+cols[c("TNF","TNFRSF1B")]<-"#fdae61"
+sf9A<-sp(temp,spcols)
+
+temp<-df.net%>%
+     filter(pathway_name=="VISFATIN")%>%
+  make_long(source,ligand,receptor,target)
+spcols<-cols(temp)
+cols[c("NAMPT","ITGA5_ITGB1")]<-"##"
+sf9B<-sp(temp,spcols)
+
+temp<-df.net%>%
+     filter(pathway_name=="COLLAGEN")%>%
+  make_long(source,ligand,receptor,target)
+spcols<-cols(temp)
+spcols[c("SDC1","CD44")]<-"#fdae61"
+
+temp<-df.net%>%
+     filter(pathway_name=="CXCL")%>%
+  make_long(source,ligand,receptor,target)
+spcols<-cols(temp)
+spcols[c("CXCL8","CXCL3","CXCL2","CXCR4")]<-"#fdae61"
+sf9D<-sp(temp,spcols)
+```
+
+# IL1 signaling
+```{r}
+library(msigdbr)
+
+m_df <- msigdbr(species = "Homo sapiens")%>%
+  filter(str_detect(gs_subcat,"CP"))%>%
+  distinct(gs_name,gene_symbol)
+
+m_df<-m_df%>%filter(gs_name=="REACTOME_INTERLEUKIN_1_SIGNALING")
+m_df%>%distinct(gene_symbol)%>%nrow()
+#[1] 102
+#download TF targets from https://tflink.net
+esr1<-read_tsv("docs/ESR1_targets.tsv")
+esr2<-read_tsv("docs/ESR2_targets.tsv")
+pgr<-read_tsv("docs/PGR_targets.tsv")
+targets<-esr1[,5:7]%>%
+  bind_rows(esr2[,5:7])%>%
+  bind_rows(pgr[,5:7])
+targets<-targets%>%filter(str_detect(Detection.method,pattern = "chromatin immunoprecipitation"))
+m_df<-m_df%>%left_join(targets,by=c("gene_symbol"="Name.Target"))
+m_df%>%distinct(gene_symbol)%>%nrow()
+#[1] 102
+m_df%>%write_tsv("docs/IL1_signaling_hormone_targets.tsv")
+
+
+
+#<-DotPlot(epi,features = c(unique(il1$gene_symbol),"signaling_IL1"))$data
+#udes p to infer markers or take them from literature
+#markers<-c("IL1A","IL1B","IL1R1","IL1R2","IL1RAP","IL1RN","MYD88","IRAK1","IRAK4","TRAF6","IKBKB","IKBKG","NFKB1","NFKB2","signaling_IL1")
+#DotPlot(epi,features = markers)+RotatedAxis()+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")
+
+
+#library(readxl)
+#il1_irea<-lapply(1:17,function(x) 
+#  read_excel("data/imm_dict_suppTab3.xlsx",sheet = x))
+#il1_irea<-lapply(il1_irea,function(x) 
+#  x%>%filter(Cytokine_Str%in%c("IL1a","IL1b")))%>%bind_rows
+#il1_irea<-il1_irea%>%mutate(Gene=toupper(Gene))%>%
+#  unite("signature",c(Celltype_Str,Cytokine_Str),sep='_')%>%
+#  select(signature,Gene)
+#il1_irea<-il1_irea%>%split(il1_irea$signature)
+#il1_irea<-lapply(il1_irea,function(x) x%>%filter(Gene%in%rownames(sc)))
+#sc<-AddModuleScore(sc,features = il1_irea,name = names(il1_irea))
+#i<-colnames(sc@meta.data)[172:205]
+#DotPlot(sc,features = i)+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+RotatedAxis()
+#temp<-il1_irea[str_detect(names(il1_irea),"CD")]%>%bind_rows%>%
+#  add_count(Gene)%>%filter(n==4)%>%distinct(Gene)%>%mutate(siganture="CD8_IL1A/B_markers")
+sc<-subset(sc,cells=which(is.na(sc$Final_Immune_Cluster_ID)))
+sc<-AddModuleScore(sc,features = list(unique(m_df$gene_symbol)),name = "signaling_IL",assay = "RNA")
+epi<-subset(sc,cells=which(sc$epithelial_subcluster_type=="EnEpi cells"&
+                             !is.na(sc$published_epithelial_subtype)))
+ens<-subset(sc,cells=which(sc$mesenchymal_subcluster_type=="EnS cells"&
+                             !is.na(sc$published_mesenchymal_subtype)))
+temp<-sc@meta.data%>%select(harmonized_major_cell_type,signaling_IL1)%>%
+  bind_rows(epi@meta.data%>%select(published_epithelial_subtype,signaling_IL1))%>%
+  bind_rows(ens@meta.data%>%select(published_mesenchymal_subtype,signaling_IL1))
+temp<-temp%>%pivot_longer(-signaling_IL1,names_to = "level",values_to = "cluster")%>%drop_na()
+temp%>%group_by(level)%>%summarise(avg_IL1=mean(signaling_IL1))
+
+sf10<-temp%>%mutate(level=case_when(str_detect(level,"harmo")~"Non-immune cell type",
+                              str_detect(level,"epi")~"EnEpi subtype",
+                              str_detect(level,"mesen")~"EnS subtype"))%>%
+  mutate(level=factor(level,levels=c("Non-immune cell type","EnEpi subtype","EnS subtype")))%>%
+  ggplot(aes(x=cluster,y=signaling_IL1))+geom_boxplot()+
+  facet_grid(~level,scales = "free_x",space="free")+
+  theme_classic(base_size = 14)+
+  theme(strip.background = element_blank(),axis.text.x = element_text(angle = 45,vjust = 1,hjust = 1))+
+  geom_hline(yintercept = 0.0757,colour = "red")+
+  labs(x="",y="IL1 signaling score")
+
+p0<-plot_grid(sf7+theme(legend.position = "bottom",legend.direction = "vertical"),sf8,labels = c('a'),rel_widths = c(.25,.75))
+p1<-plot_grid(sf9A,sf9B,nrow = 2,labels = c('d','e'))
+p1<-plot_grid(p1,sf9C,sf9D,ncol=3,labels = c('','f','g'))
+p2<-plot_grid(sf10,NULL,NULL,ncol=3,labels = c('h','i','j'))
+ggsave("m_fig3.pdf",height = 14,width=14,device = cairo_pdf,
+       plot_grid(p0,p1,p3,nrow = 3,rel_heights = c(.3,.4,.3)))
+
+```
+
