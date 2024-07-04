@@ -1,5 +1,5 @@
 ---
-title: "Macrophages paper"
+title: "Fig. 1"
 output: html_notebook
 ---
 
