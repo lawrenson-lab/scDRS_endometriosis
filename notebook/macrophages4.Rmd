@@ -1,5 +1,5 @@
 ---
-title: "R Notebook"
+title: "Fig4"
 output: html_notebook
 ---
 
@@ -115,13 +115,6 @@ organoids<-AddMetaData(organoids,temp)
 ```{r}
 org1<-subset(organoids,
              cells=which(str_detect(organoids$final_prediction,"SOX9|MUC|dular|IHH|ated")))
-sc1<-VlnPlot(org1,features = c("prediction.score.IHH..SPDEF.",
-                               "prediction.score.Glandular.secretory", 
-                               "prediction.score.MUC5B.", 
-                               "prediction.score.SOX9..LGR5.", 
-                               "prediction.score.Ciliated"),
-             pt.size=0,
-             stack=T)
 
 sanity_markers<-list("SOX9+LGR5+"=c("SOX9","LGR5","MMP7","ESR1","PGR"),
                 "MUC5+"=c("MUC5B", "TFF3"), 
@@ -156,53 +149,77 @@ sc2C<-org1@meta.data%>%
         axis.text.x = element_text(angle=45,vjust = 1,hjust = 1),
         axis.title.y = element_blank())
 sc2<-plot_grid(sc2A+theme(legend.position = "none"),
-               sc2C,sc2B,ncol=3,align = 'h',axis = 'bt',rel_widths = c(.5,.3,.2))
+               sc2C,sc2B,ncol=3,align = 'h',axis = 'bt',rel_widths = c(.5,.2,.2))
 sc2<-plot_grid(sc2,get_legend(sc2A),rel_widths = c(.9,.1))
+ggsave(filename = "supp2.pdf",device = cai)
 ```
 
-# new-new annotation since sanity plots show an overlap between clusters
+# Sanity plots show an overlap between clusters: separate Ciliated vs non-ciliated
 ```{r}
 org1@meta.data<-org1@meta.data%>%
-  mutate(alt_pred=ifelse(str_detect(final_prediction,"IHH|SOX|MUC"),
-                         "mixed",
-                         final_prediction))
+  mutate(simplified_prediction=ifelse(final_prediction=="Ciliated",
+                                      final_prediction,
+                                      "Non-ciliated"))
 
-temp<-org1@meta.data%>%count(alt_pred)%>%arrange(n)%>%
-  mutate(alt_pred=factor(alt_pred,levels=alt_pred))
-Idents(org1)<-factor(org1$alt_pred,levels=temp$alt_pred)
-sc2A<-DotPlot(org1,features = sanity_markers)+RotatedAxis()+
-  scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
-  theme(strip.text = element_text(angle=80))+
-  labs(x="Gene",y="")+
-  guides(color = guide_colorbar(title = "Average\nexpression"),
+Idents(org1)<-factor(org1$simplified_prediction,levels = c("Non-ciliated","Ciliated"))
+sf1<-DimPlot(org1,cols = c("gray","#d53e48"),label.size = 4,alpha=0.4,label = T,repel=T)+
+    NoLegend()+NoAxes()+xlim(-9,6)+
+    annotate("segment", 
+             x = c(-7,-7), xend = c(-3,-7), 
+             y = c(-7,-7), yend = c(-7,-1), 
+             arrow = arrow(type = "closed", length = unit(10, 'pt')))+
+    annotate("text",x = -5.5,y=-8.5,label="UMAP 1",size=4)+
+    annotate("text",x=-8,y=-5,label="UMAP 2",size=4,angle=90)+
+  theme(axis.text = element_text(angle=14))
+
+sf2<-org1@meta.data%>%
+  ggplot(aes(x=simplified_prediction,
+             y=signaling_IL1))+
+  geom_violin(aes(fill=simplified_prediction),show.legend = F)+
+  stat_compare_means(method = "t.test",label = "p.signif")+
+  theme_classic(base_size = 14)+
+  theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+  labs(x="",y="IL1 signaling")+
+  scale_fill_manual(values = c("gray","#d53e48"))
+
+sf3<-DotPlot(org1,features = c("IL1A","IL1B","IL1R1","IL1R2","IL1RAP","MYD88","IRAK1","IRAK4","TRAF6","IKBKB","IKBKG","NFKB1","NFKB2"))+
+  scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+coord_flip()+labs(y="Gene",x="")+
+  theme_classic(base_size = 14)+theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+    guides(color = guide_colorbar(title = "Average\nexpression"),
            size=guide_legend(title="Percent\nexpressed"))
-sc2B<-temp%>%
-  ggplot(aes(x=n,y=alt_pred))+geom_col()+
-  theme_classic(base_size = 14)+labs(y="")+
-  theme(axis.text.y = element_blank(),axis.ticks.y = element_blank(),
-        axis.text.x = element_text(angle=90))+
-  scale_x_continuous(trans = "log10")
-sc2<-plot_grid(sc2A+theme(legend.position = "none"),NULL,
-          sc2B,ncol=3,align = 'h',axis = 'bt',rel_widths = c(.7,-.01,.3))
-sc2<-plot_grid(sc2,get_legend(sc2A),rel_widths = c(.9,.1))
 
-```
+temp<-org1@assays$progeny$scale.data%>%t()%>%
+  as.data.frame%>%
+  rownames_to_column("barcode")%>%
+  inner_join(org1@meta.data%>%select(barcode,simplified_prediction,signaling_IL1),
+             by="barcode")
+temp<-temp%>%pivot_longer(cols = Androgen:WNT,
+                          names_to = "pathway",
+                          values_to = "progeny_score")%>%drop_na()
+temp<-temp%>%group_by(pathway)%>%mutate(box=cut(progeny_score,breaks=10,labels=F))%>%ungroup
+temp<-temp%>%group_by(pathway,box,simplified_prediction)%>%
+summarise(activity=median(progeny_score),avg_IL1=mean(signaling_IL1),size=n())%>%
+ungroup()%>%distinct()%>%mutate(pathway=str_replace(pathway,"NFkB","NFκB")%>%
+         str_replace("TGFb","TGFβ")%>%
+         str_replace("TNFa","TNFα"))
 
-```{r}
-sf1<-FeaturePlot(organoids,features = "prediction.score.max")+scale_color_viridis_c(option = 'A',direction = -1)
+#temp%>%
+#    ggplot(aes(x=activity,y=avg_IL1,group=simplified_prediction,color=simplified_prediction))+
+#    geom_point(aes(size=size))+geom_line()+facet_wrap(~pathway,scales="free",nrow = 3)+
+#    theme_classic(base_size=16)+labs(color="Cell type",size="Cells",y="Average IL1")+
+#    theme(strip.background=element_blank(),
+#          legend.position = "bottom",legend.box = "vertical")+
+#    scale_color_manual(values=c("#d53e48","gray"))+
+#    guides(col=guide_legend(nrow=2))
+sf4<-temp%>%filter(pathway=="Estrogen")%>%
+    ggplot(aes(x=box,y=avg_IL1,group=simplified_prediction,color=simplified_prediction))+
+    geom_point(aes(size=size))+geom_line()+
+    theme_classic(base_size=14)+labs(color="Cell type",size="Cells",y="Average IL1\nsignaling",x="Estrogen")+
+    theme(legend.position = "bottom",legend.box = "vertical")+
+    scale_color_manual(values=c("#d53e48","gray"))#+
+#  stat_cor(method = "spearman")
 
-temp<-org1@meta.data
-temp%>%ggplot(aes(x=final_prediction,y=signaling_IL1,group=final_prediction,col=prediction.score.max))+geom_violin()+geom_jitter()+stat_compare_means(method = "t.test",ref.group = "Ciliated",label = "p.signif")+theme_classic(base_size = 14)+theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+labs(x="predicted label",y="IL1 signaling",col="label\nconfidence")
+ggsave("m_fig4.pdf",plot = plot_grid(plot_grid(NULL,sf1,NULL,nrow=3,rel_heights = c(.1,.8,.1)),sf2,sf3+theme(legend.position = "none"),get_legend(sf3),sf4,ncol=5,labels = c('a','b','c','','d'),rel_widths = c(.2,.15,.2,.1,.35)),height = 4,width = 13,device = cairo_pdf)
 
-
-temp1<-temp%>%mutate(Estrogen=cut(Estrogen,breaks = 10,labels = F))%>%
-  group_by(Estrogen,predicted.id)%>%
-  mutate(il1=mean(signaling_IL1))%>%
-  select(predicted.id,Estrogen,il1)%>%
-  distinct()
-temp1%>%ggplot(aes(x=Estrogen,y=il1,group=predicted.id,col=predicted.id))+geom_point()+geom_line()+theme_classic(base_size = 14)
-
-
-p0<-plot_grid(sf1,sf2,align = 'h',labels = c('a','b'))
-p1<-plot_grid(sf4,NULL,ncol=2,labels = c("d",''),rel_widths = c(.6,.4))
 ```
