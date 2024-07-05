@@ -1,0 +1,69 @@
+---
+title: "Fig. 6"
+output: html_notebook
+---
+
+# Different figure
+
+```{r}
+files<-list.files("scDRS",full.names = T)
+files<-files[str_detect(files,"\\.score.gz")]
+files<-files[-2]#drop merged file, check manually
+scdrs<-lapply(files,read_tsv)
+names(scdrs)<-str_remove_all(files,"scDRS/|.score.gz")
+scdrs<-lapply(names(scdrs),function(x) scdrs[[x]]%>%mutate(trait=x))%>%bind_rows()
+colnames(scdrs)[1]<-"barcode"
+scdrs<-sc@meta.data%>%rownames_to_column("barcode")%>%
+  select(group_major_plus_immune,barcode,Class,Stage.y)%>%
+  left_join(scdrs,by="barcode")
+
+plot_df<-scdrs%>%
+  drop_na()%>%filter(trait!="endometriosis")%>%
+  group_by(trait,group_major_plus_immune)%>%
+  summarise(total=n(),
+            signi=sum(mc_pval<0.05),
+            prop=100*signi/total,
+            score=mean(norm_score))
+
+files<-list.files("scDRS",full.names = T)
+files<-files[str_detect(files,"group_harmonized")]
+group<-lapply(files, read_tsv)
+names(group)<-str_remove_all(files,"scDRS/|.scdrs_group.group_harmonized_major_plus_immune")
+group<-lapply(names(group),function(x) 
+  group[[x]]%>%mutate(trait=x))%>%bind_rows()
+colnames(plot_df)[2]<-"group"
+plot_df<-plot_df%>%merge(group,by=c("trait","group"))
+
+plot_df<-plot_df%>%
+  mutate(group=factor(group,levels=rev(c(cell_order1$altImmCl,
+                                         cell_order$harmonized_major_cell_type[cell_order$type=="non"]))))
+plot_df$trait=str_replace_all(plot_df$trait,'_',' ')%>%
+           str_replace("hg","high grade")%>%
+           str_replace("clearcell","clear cell")%>%
+           str_replace("abdo pelvic","abdominal and pelvic")
+traits<-list(A=c("arthritis","asthma","IBS","osteoarthritis"),
+              B=c("abdominal and pelvic pain","back pain","dorsalgia","headache","pain"),
+              C=c("clear cell","endometroid","high grade","hormone-sensitive cancers"),
+              D=c("uterine fibroids","menopause age"),
+              E="height")
+traits<-traits%>%reshape2::melt()
+plot_df<-plot_df%>%mutate(trait=factor(trait,levels=traits$value))
+
+
+sf7<-plot_df%>%mutate(asso=ifelse(assoc_mcp<0.05,T,F))%>%
+  ggplot(aes(y=group,x=trait,size=prop,fill=score,colour=asso))+
+  geom_point(pch=21)+
+  scale_fill_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+  scale_colour_manual(values=c("white","black"))+
+  scale_shape_manual(values=16)+
+  geom_text(data=plot_df%>%mutate(hetero=ifelse(hetero_mcp<0.05,'X','')),
+            aes(y=group,x=trait,size=prop,label=hetero),col="black",show.legend = F)+
+  labs(x="",y="",size="significant %")+
+  theme_classic(base_size = 16)+
+  theme(axis.text.x = element_text(angle=90,vjust = .5,hjust = 1),
+        legend.position = "bottom")+
+  guides(colour="none")
+
+
+```
+
