@@ -12,6 +12,7 @@ library(ggplot2)
 library(rstatix)
 library(readxl)
 library(progeny)
+library(ggpubr)
 
 sc<-readRDS("data/fixed_annotated_aux.seurat.rds")
 epi<-subset(sc,cells=which(sc$epithelial_subcluster_type=="EnEpi cells"&
@@ -151,7 +152,7 @@ sc2C<-org1@meta.data%>%
 sc2<-plot_grid(sc2A+theme(legend.position = "none"),
                sc2C,sc2B,ncol=3,align = 'h',axis = 'bt',rel_widths = c(.5,.2,.2))
 sc2<-plot_grid(sc2,get_legend(sc2A),rel_widths = c(.9,.1))
-ggsave(filename = "supp2.pdf",device = cai)
+ggsave(filename = "supp3.pdf",device = cairo_pdf,height = 4,width = 13)
 ```
 
 # Sanity plots show an overlap between clusters: separate Ciliated vs non-ciliated
@@ -180,7 +181,7 @@ sf2<-org1@meta.data%>%
   theme_classic(base_size = 14)+
   theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
   labs(x="",y="IL1 signaling")+
-  scale_fill_manual(values = c("gray","#d53e48"))
+  scale_fill_manual(values = c("#d53e48","gray"))
 
 sf3<-DotPlot(org1,features = c("IL1A","IL1B","IL1R1","IL1R2","IL1RAP","MYD88","IRAK1","IRAK4","TRAF6","IKBKB","IKBKG","NFKB1","NFKB2"))+
   scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+coord_flip()+labs(y="Gene",x="")+
