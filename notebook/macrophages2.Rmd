@@ -110,7 +110,8 @@ sf2<-temp%>%ggplot(aes(x=cell_type,y=ID,fill=p.adjust,col=p.adjust,size=Count,sh
   scale_shape_manual(values=25:24)+
   theme_classic(base_size = 14)+
   theme(axis.text.x = element_text(angle=45,vjust =1,hjust = 1,size = 13),
-        legend.box = "vertical")+labs(x="",y="Pathway",shape="",col="P-val")
+        legend.box = "vertical",axis.text = element_text(colour = "#000000"))+
+  labs(x="",y="Pathway",shape="",col="P-val")
 
 ```
 
@@ -228,12 +229,23 @@ eqtl<-eqtl%>%
            str_replace("Cell","cell")%>%
            str_replace("memo","Memo"),
          Effect=ifelse(Risk_Allele_Effect=="pos","positive","negative"))
-sf5<-eqtl%>%ggplot(aes(x=Gene,y=Tissue,shape=Effect,size=as.numeric(P)))+
-    geom_point(fill="darkgray",col="darkgray")+scale_size_continuous(trans = "log10")+
-    theme_classic(base_size = 14)+theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
-    scale_shape_manual(values =25:24)+scale_size(range=c(6,1))+
-    labs(y="Tissue cell type",size="P-val")
+eqtl<-eqtl%>%mutate(Tissue=str_replace(Tissue,"eQTLGen cis eQTLs","Blood (eQTLGen)")%>%
+                    str_replace("PsychENCODE eQTLs","Brain (PsychENCODE)")%>%
+                    str_replace("TwinsUK ge LCL","Blood and lymphoblastoid (TwinsUK)")%>%
+                    str_replace("TwinsUK ge skin","Skin (TwinsUK)"),
+                    tissue_type=ifelse(str_detect(Tissue,"B-|Dendri|CD4|CD8|Monocy|Bloo|Sple"),
+                                  "Immune","Non-immune"))
 
+sf5<-eqtl%>%mutate(tissue_type=factor(tissue_type,levels=c("Non-immune","Immune")))%>%
+  ggplot(aes(x=Gene,y=Tissue,shape=Effect,size=as.numeric(P)))+
+    geom_point(fill="darkgray",col="darkgray")+scale_size_continuous(trans = "log10")+
+    theme_classic(base_size = 14)+
+    scale_shape_manual(values =25:24)+scale_size(range=c(6,1))+
+    labs(y="Tissue",size="P-val",shape="Effect allele\nexpression")+
+    facet_wrap(~tissue_type,nrow = 2,scales = 'free_y',strip.position = "left")+
+    theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1),
+          strip.placement = "outside",strip.background = element_blank(),
+          axis.text = element_text(colour = "#000000"))
 
 p0<-plot_grid(sf1,NULL,sf2,labels = c('a','','b'),nrow=3,rel_heights = c(.5,-.07,.5),align = 'v')
 p0<-plot_grid(p0,sf3,rel_widths = c(.4,.6),labels = c('','c'))
