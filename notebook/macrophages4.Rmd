@@ -224,3 +224,44 @@ sf4<-temp%>%filter(pathway=="Estrogen")%>%
 ggsave("m_fig4.pdf",plot = plot_grid(plot_grid(NULL,sf1,NULL,nrow=3,rel_heights = c(.1,.8,.1)),sf2,sf3+theme(legend.position = "none"),get_legend(sf3),sf4,ncol=5,labels = c('a','b','c','','d'),rel_widths = c(.2,.15,.2,.1,.35)),height = 4,width = 13,device = cairo_pdf)
 
 ```
+
+# supplementary
+```{r}
+cell_order<-sc@meta.data%>%distinct(harmonized_major_cell_type)%>%
+  mutate(type=ifelse(str_detect(harmonized_major_cell_type,"B|Mast|Myel|NK|Plas|T"),
+                     "immune","non"))%>%
+  arrange(type,harmonized_major_cell_type)
+
+sc<-AddModuleScore(sc,features = list(unique(il1$gene_symbol)),
+                          name = "signaling_IL",assay = "RNA")
+
+Idents(sc)<-sc$group_major_plus_immune
+sup2A<-DotPlot(subset(sc,cells = which(sc$harmonized_major_cell_type%in%
+                                        cell_order$harmonized_major_cell_type[
+                                          cell_order$type=="non"])),
+              features = c(unique(il1$gene_symbol),"signaling_IL1"))+
+  RotatedAxis()+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+    labs(x="Gene",y="")+
+    guides(color = guide_colorbar(title = "Average\nexpression"),
+           size=guide_legend(title="Percent\nexpressed"))
+sup2B<-DotPlot(subset(sc,cells = which(sc$harmonized_major_cell_type%in%
+                                           cell_order$harmonized_major_cell_type[
+                                               cell_order$type!="non"])),
+               features = c(unique(il1$gene_symbol),"signaling_IL1"))+
+    RotatedAxis()+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+    labs(x="Gene",y="")+
+    guides(color = guide_colorbar(title = "Average\nexpression"),
+           size=guide_legend(title="Percent\nexpressed"))
+sup2C<-DotPlot(org1,features = c(unique(il1$gene_symbol),"signaling_IL1"))+
+    RotatedAxis()+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+    labs(x="Gene",y="")+
+    guides(color = guide_colorbar(title = "Average\nexpression"),
+           size=guide_legend(title="Percent\nexpressed"))
+ggsave("supfig2.pdf",plot = plot_grid(sup2B,
+                                     sup2A+theme(legend.key.size = unit(.4, "lines"),
+                                                 legend.text = element_text(size=10)),
+                                     sup2C+theme(legend.key.size = unit(.4, "lines"),
+                                                 legend.text = element_text(size=10)),
+                                     nrow=3,rel_heights = c(.5,.3,.2),align = 'v'),
+       height = 10,width = 18,device = cairo_pdf)
+```
