@@ -110,7 +110,8 @@ sf2<-temp%>%ggplot(aes(x=cell_type,y=ID,fill=p.adjust,col=p.adjust,size=Count,sh
   scale_shape_manual(values=25:24)+
   theme_classic(base_size = 14)+
   theme(axis.text.x = element_text(angle=45,vjust =1,hjust = 1,size = 13),
-        legend.box = "vertical")+labs(x="",y="Pathway",shape="",col="P-val")
+        legend.box = "vertical")+labs(x="",y="Pathway",shape="Correlation\nwith scDRS",
+                                      fill="P-value",size="Number\nof genes")
 
 ```
 
@@ -149,7 +150,7 @@ ungroup()%>%distinct()%>%mutate(pathway=str_replace(pathway,"NFkB","NFκB")%>%
 #theme(strip.background=element_blank(),legend.position = c(.75, .05),legend.box="horizontal")+scale_color_grey()
 
 sf3<-temp%>%filter(pathway%in%c("NFκB","PI3K","TGFβ","TNFα"))%>%
-  ggplot(aes(x=activity,y=avg_score,group=group_major_plus_immune,color=group_major_plus_immune))+
+  ggplot(aes(x=box,y=avg_score,group=group_major_plus_immune,color=group_major_plus_immune))+
     geom_point(aes(size=size))+geom_line()+facet_wrap(~pathway,scales="free_x",nrow = 3)+
     theme_classic(base_size=16)+
     theme(strip.background=element_blank(),strip.text.x = element_text(size=14))+
