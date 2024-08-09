@@ -72,18 +72,26 @@ group<-group%>%
 colnames(plot_df)[2]<-"group"
 plot_df<-plot_df%>%merge(group,by=c("trait","group"))
 
+plot_df$trait=str_replace_all(plot_df$trait,'_',' ')%>%
+           str_replace("hg","high grade serous ovarian cancer")%>%
+           str_replace("clearcell","clear cell ovarian cancer")%>%
+           str_replace("endometroid","endometroid ovarian cancer")%>%
+           str_replace("abdo pelvic","abdominal and pelvic")
+plot_df<-plot_df%>%mutate(group=str_replace(group," Memo"," memo")%>%
+                            str_replace("ly Exh","ly exh"),
+                          trait=str_to_sentence(trait)%>%str_replace("Ibs","IBS"))
+cell_order1<-cell_order1%>%mutate(group_major_plus_immune=str_replace(group_major_plus_immune," Memo"," memo")%>%
+                                      str_replace("ly Exh","ly exh"))
 plot_df<-plot_df%>%
   mutate(group=factor(group,levels=rev(c(cell_order1$group_major_plus_immune,
                                          cell_order$harmonized_major_cell_type[cell_order$type=="non"]))))
-plot_df$trait=str_replace_all(plot_df$trait,'_',' ')%>%
-           str_replace("hg","high grade")%>%
-           str_replace("clearcell","clear cell")%>%
-           str_replace("abdo pelvic","abdominal and pelvic")
-traits<-list(A=c("arthritis","asthma","IBS","osteoarthritis"),
-              B=c("abdominal and pelvic pain","back pain","dorsalgia","headache","pain"),
-              C=c("clear cell","endometroid","high grade","hormone-sensitive cancers"),
-              D=c("uterine fibroids","menopause age"),
-              E="height")
+
+traits<-list(A=c("Arthritis","Asthma","IBS","Osteoarthritis"),
+              B=c("Abdominal and pelvic pain","Back pain","Dorsalgia","Headache","Pain"),
+              C=c("Clear cell ovarian cancer","Endometroid ovarian cancer",
+                  "High grade serous ovarian cancer","Hormone-sensitive cancers"),
+              D=c("Uterine fibroids","Menopause age"),
+              E="Height")
 traits<-traits%>%reshape2::melt()
 plot_df<-plot_df%>%mutate(trait=factor(trait,levels=traits$value))
 
@@ -96,13 +104,24 @@ sf7<-plot_df%>%mutate(asso=ifelse(assoc_mcp<0.05,T,F))%>%
   scale_shape_manual(values=16)+
   geom_text(data=plot_df%>%mutate(hetero=ifelse(hetero_mcp<0.05,'X','')),
             aes(y=group,x=trait,size=prop,label=hetero),col="black",show.legend = F)+
-  labs(x="",y="",size="significant %")+
+  labs(x="",y="",size="% significan\ncells",fill="scDRS")+
   theme_classic(base_size = 16)+
-  theme(axis.text.x = element_text(angle=90,vjust = .5,hjust = 1),
-        legend.position = "bottom")+
+  theme(axis.text.x = element_text(angle=90,vjust = .5,hjust = 1))+
   guides(colour="none")
 
 ggsave("m_fig6.pdf",device = cairo_pdf,plot=sf7)
 
 ```
 
+```{r}
+library(FactoMineR)
+
+plot_df<-scdrs%>%
+  select(barcode,norm_score,trait)%>%
+  pivot_wider(names_from = trait,values_from = norm_score)%>%
+  plotcolumn_to_rownames("barcode")
+
+plot_df[is.na(plot_df)]<-0
+pcares<-PCA(plot_df)
+dimdesc(pcares,axes = 1:2)
+```

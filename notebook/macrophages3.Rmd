@@ -134,11 +134,11 @@ sf8A<-Heatmap(temp,name="outgoing\nligands",col=colorRamp2(c(0,1,15), c("#0D0887
         show_heatmap_legend = F,column_title_side = "bottom",
         column_names_rot = 45,
         right_annotation = rowAnnotation("total"=anno_barplot(rowSums(temp),border = F)),
-        top_annotation =HeatmapAnnotation("unique\nLR"=anno_barplot(col_anno$n,border = F)))
+        top_annotation =HeatmapAnnotation("unique\npairs"=anno_barplot(col_anno$n,border = F)))
 sf8A<-grid.grabExpr(draw(sf8A))
 sf8<-plot_grid(sf8B,sf8A,rel_widths = c(.62,.38),labels = c('b','c'))
-lgd = Legend(at = c(0, 1, 15), col_fun = colorRamp2(c(0,1,15), c("#0D0887FF","#CC4678FF","#F0F921ff")), title = "ligands", title_position = "lefttop",labels_gp = gpar(fontsize=14),title_gp = gpar(fontsize = 16),direction = "horizontal",legend_width = unit(6, "cm"))
-sf8<-plot_grid(sf8,grid.grabExpr(draw(lgd)),nrow=2,rel_heights = c(.9,.1))
+lgd <- Legend(at = c(0, 1, 15), col_fun = colorRamp2(c(0,1,15), c("#0D0887FF","#CC4678FF","#F0F921ff")), title = "Ligands", labels_gp = gpar(fontsize=14),title_gp = gpar(fontsize = 16),legend_width = unit(6, "cm"))
+sf8<-plot_grid(sf8,grid.grabExpr(draw(lgd)),rel_widths = c(.93,.07))
 ```
 
 ```{r}
@@ -150,7 +150,7 @@ sp<-function(df_plot,cols){
                    fill = factor(node),
                    label = node))+
     geom_sankey(flow.alpha = 0.5,show.legend = TRUE)+
-    geom_sankey_text(color = "black", hjust = 0.5)+  
+    geom_sankey_text(color = "black", hjust = 0.5,size=12/.pt)+  
     theme_bw()+
     theme_sankey(base_size = 14)+
     theme(legend.position = "none")+
@@ -161,30 +161,24 @@ cols<-function(plot_df){
     mutate(col=ifelse(node%in%cell_order1$group_major_plus_immune,"#fdae61","skyblue2"))%>%
     deframe()}
 
-
+colnames(df.net)<-str_to_title(colnames(df.net))
 temp<-df.net%>%
-  filter(pathway_name=="TNF")%>%
-  make_long(source,ligand,receptor,target)
+  filter(Pathway_name=="TNF")%>%
+  make_long(Source,Ligand,Receptor,Target)
 spcols<-cols(temp)
-cols[c("TNF","TNFRSF1B")]<-"#fdae61"
+spcols[c("TNF","TNFRSF1B")]<-"#fdae61"
 sf9A<-sp(temp,spcols)
 
 temp<-df.net%>%
-     filter(pathway_name=="VISFATIN")%>%
-  make_long(source,ligand,receptor,target)
+     filter(Pathway_name=="VISFATIN")%>%
+  make_long(Source,Ligand,Receptor,Target)
 spcols<-cols(temp)
-cols[c("NAMPT","ITGA5_ITGB1")]<-"##"
+spcols[c("NAMPT","ITGA5_ITGB1")]<-"#fdae61"
 sf9B<-sp(temp,spcols)
 
 temp<-df.net%>%
-     filter(pathway_name=="COLLAGEN")%>%
-  make_long(source,ligand,receptor,target)
-spcols<-cols(temp)
-spcols[c("SDC1","CD44")]<-"#fdae61"
-
-temp<-df.net%>%
-     filter(pathway_name=="CXCL")%>%
-  make_long(source,ligand,receptor,target)
+     filter(Pathway_name=="CXCL")%>%
+  make_long(Source,Ligand,Receptor,Target)
 spcols<-cols(temp)
 spcols[c("CXCL8","CXCL3","CXCL2","CXCR4")]<-"#fdae61"
 sf9D<-sp(temp,spcols)
@@ -261,11 +255,11 @@ sf10<-temp%>%mutate(level=case_when(str_detect(level,"harmo")~"Non-immune cell t
   labs(x="",y="IL1 signaling score")
 
 p0<-plot_grid(sf7+theme(legend.position = "bottom",legend.direction = "vertical"),sf8,labels = c('a'),rel_widths = c(.25,.75))
-p1<-plot_grid(sf9A,sf9B,nrow = 2,labels = c('d','e'))
+p1<-plot_grid(sf9A,sf9B,nrow = 2,labels = c('d','e'),rel_heights = c(.45,.55))
 p1<-plot_grid(p1,sf9D,sf10,ncol=3,labels = c('','f','g'))
-p2<-plot_grid(NULL,NULL,labels = c('h','i'))
-ggsave("m_fig3.pdf",height = 16,width=19,device = cairo_pdf,
-       plot_grid(p0,p1,p2,nrow = 3,rel_heights = c(.4,.3,.3)))
+ggsave("m_fig3.pdf",height = 20,width=19,device = cairo_pdf,
+       plot_grid(p0,p1,NULL,NULL,nrow = 4,labels = c('','','h','i'),
+                 rel_heights = c(.35,.25,.2,.2)))
 
 ```
 

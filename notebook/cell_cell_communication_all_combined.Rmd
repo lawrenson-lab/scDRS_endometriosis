@@ -1,0 +1,217 @@
+---
+title: "Cell Communcaiton - combined immune subtype (ALL) "
+author: "Pak Yu"
+date: "2/10/2023"
+editor_options: 
+  chunk_output_type: console
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(CellChat)
+library(cell_chat_data)
+library(patchwork)
+library(cowplot)
+library(grid)
+library(NMF)
+library(ggalluvial)
+library(ComplexHeatmap)
+library(writexl)
+library(readr)
+```
+
+
+
+### loading Cell Chat data 
+
+```{r}
+endo_genes_positive <- read_delim("data/endo_genes_positive.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+cell_chat_data <- readRDS("data/combined/CellChat_all.rds")
+```
+
+### 
+
+```{r}
+group_size <- cell_chat_data@idents %>% table %>% as.numeric()
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cell_chat_data@net$count, vertex.weight = group_size, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cell_chat_data@net$weight, vertex.weight = group_size, weight.scale = T, label.edge= F, title.name = "Interacion strength")
+```
+
+
+```{r}
+par(mfrow = c(2,3), xpd=TRUE)
+
+myeloid_cell_type <- c("Macrophages","Dendritic") %>% paste(.,collapse="|")
+cell_chat_tbl <- list(w=cell_chat_data@net$weight, c=cell_chat_data@net$count)
+remove_name <- function(l,regex="[T]?-?[Cc]ells"){
+  rownames(l) <-  rownames(l) %>% str_remove_all(regex) %>% str_trim()
+  colnames(l) <- colnames(l) %>% str_remove_all(regex) %>% str_trim()
+  l
+}
+cell_chat_tbl <- lapply(cell_chat_tbl,remove_name)
+
+
+idx <- rownames(cell_chat_tbl$w) %>% str_detect( .,myeloid_cell_type)  %>% which
+cell_group_interaction_plot <- lapply(idx,function(i){
+    max_weight <- max(cell_chat_tbl$w)
+    #print(rownames(cell_chat_tbl)[i])
+    cell_chat_tbl$w[-i,] <- 0
+    netVisual_circle(cell_chat_tbl$w, vertex.weight = group_size, weight.scale = T, edge.weight.max =max_weight , title.name = rownames(cell_chat_tbl$w)[i], margin=0)
+})
+
+add_on <- lapply(idx,function(i){
+    max_weight <- max(cell_chat_tbl$c)
+    cell_chat_tbl$c[-i,] <- 0
+    netVisual_circle(cell_chat_tbl$c, vertex.weight = group_size, weight.scale = T, edge.weight.max =max_weight , title.name = rownames(cell_chat_tbl$c)[i],margin=0)
+})
+  
+cell_group_interaction_plot <- c(cell_group_interaction_plot, add_on)  
+
+
+```
+
+```{r}
+library(readr)
+
+cell_chat_gene <-  read_csv("data/cell_chat_gene_check.txt", col_names = FALSE) %>% 
+                        unlist %>% unname
+
+cell_chat_gene_check <- cell_chat_gene %>% 
+                        paste(.,collapse = "|")
+
+sig_pathway<- cell_chat_data@DB$interaction %>% 
+              mutate(LR_symbol= paste(receptor.symbol, ligand.symbol,sep=",")) %>% 
+              group_by(pathway_name) %>% summarise(LR_symbol=paste(LR_symbol, collapse=" ")) %>% 
+              filter(str_detect(LR_symbol,cell_chat_gene_check))
+
+
+```
+
+
+### Dendritic Cells
+
+```{r}
+par(mfrow = c(1,2), xpd=TRUE)
+p1 <- netVisual_chord_gene(cell_chat_data, source.use = "Dendritic Cells", lab.cex = 0.5,show.legend =FALSE)
+p2 <- netVisual_chord_gene(cell_chat_data, targets.use = "Dendritic Cells", lab.cex = 0.5,show.legend =FALSE)
+
+```
+
+```{r}
+p1 <- netVisual_chord_gene(cell_chat_data, source.use = "Dendritic Cells",target.use=-c(19,13:15,7) ,lab.cex = 0.5,show.legend =FALSE,slot.name ="netP")
+p2 <- netVisual_chord_gene(cell_chat_data, targets.use = "Dendritic Cells", lab.cex = 0.5,show.legend =FALSE,slot.name ="netP")
+```
+
+### Macrophages Cells
+
+```{r}
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_chord_gene(cell_chat_data, sources.use = c(12,13), lab.cex = 0.7,legend.pos.y = 30, slot.name ="netP",show.legend =FALSE)
+netVisual_chord_gene(cell_chat_data, targets.use = c(12,13), lab.cex = 0.7,legend.pos.y = 30, slot.name ="netP",show.legend =FALSE)
+```
+
+```{r}
+netVisual_chord_gene(cell_chat_data, sources.use = c(12,13), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cell_chat_data, targets.use = c(12,13), lab.cex = 0.5,legend.pos.y = 30)
+```
+
+## M2
+
+```{r}
+par(mfrow = c(1,2), xpd=TRUE)
+
+netVisual_chord_gene(cell_chat_data, sources.use = "Macrophages M2", lab.cex = 0.7,legend.pos.y = 30, slot.name ="netP",show.legend =FALSE)
+netVisual_chord_gene(cell_chat_data, targets.use = "Macrophages M2", lab.cex = 0.7,legend.pos.y = 30, slot.name ="netP",show.legend =FALSE)
+```
+
+```{r}
+netVisual_chord_gene(cell_chat_data, sources.use = "Macrophages M2", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cell_chat_data, targets.use = "Macrophages M2", lab.cex = 0.5,legend.pos.y = 30)
+```
+
+### All Cicicular Plots
+
+```{r}
+par(mfrow = c(3,4), xpd=TRUE)
+cell_chat_tbl <- cell_chat_data@net$weight
+cell_group_interaction_plot <- lapply(1:nrow(cell_chat_tbl),function(i){
+    max_weight <- max(cell_chat_tbl)
+    print(rownames(cell_chat_tbl)[i])
+    cell_chat_tbl[-i,] <- 0
+    netVisual_circle(cell_chat_tbl, vertex.weight = group_size, weight.scale = T, edge.weight.max =max_weight , title.name = rownames(cell_chat_tbl)[i])
+})
+rm(cell_chat_tbl)
+```
+
+```{r}
+cell_chat_data<- netAnalysis_computeCentrality(cell_chat_data, slot.name = "netP")
+ht1 <- netAnalysis_signalingRole_heatmap(cell_chat_data, pattern = "outgoing", width=12, height= 20)
+ht2 <- netAnalysis_signalingRole_heatmap(cell_chat_data, pattern = "incoming" ,width=12, height= 20)
+ht1 + ht2
+```
+
+## Cell-Cell communication table
+
+```{r}
+tbl <- subsetCommunication(cell_chat_data, slot.name = "netP")
+
+tbl <- tbl %>% filter( pathway_name %in% sig_pathway$pathway_name)
+
+pathway_show <- tbl$pathway_name %>% unique() 
+
+par(mfrow=c(4,4),mai=c(0.25,0.15,0,25,0.15))
+
+for(i in pathway_show) {
+netVisual_aggregate(cell_chat_data, signaling = i, layout = "circle")
+}
+```
+
+```{r}
+tbl <- subsetCommunication(cell_chat_data, slot.name = "net")
+plt_df <-tbl %>% 
+  dplyr::filter(source == "Macrophages M2") %>%
+  mutate(target=fct_infreq(target))
+
+plt_df %>%
+count(pathway_name,target) %>%   
+ggplot(. ,aes(x=target,y=pathway_name, size=n ) ) + 
+  geom_point()+
+  theme_classic()
+
+
+ggplot(plt_df, aes(y=fct_rev(target), fill=pathway_name))+
+  geom_bar() +
+  labs(y="receiver",x="")+
+  guides(fill=guide_legend("pathway"))+
+  theme_classic()
+  #coord_flip()
+
+source_select <- tbl %>% 
+                dplyr::filter(target == "Macrophages M2") %>%
+                mutate(source=fct_infreq(source)) %>%
+                dplyr::select(source) %>% 
+                head(4) %>% 
+                unlist()
+color_use= c("#7fc97f","#beaed4","#fdc086","#ffff99")
+netVisual_chord_gene(cell_chat_data, sources.use = source_select, targets.use = "Macrophages M2", lab.cex = 0.7,legend.pos.y = 30, slot.name ="netP",show.legend =FALSE, color.use = color_use)
+```
+
+```{r}
+par(mfrow=c(4,4),mai=c(0.25,0.15,0,25,0.15))
+cell_chat_data <- netAnalysis_computeCentrality(cell_chat_data, slot.name = "netP")
+for(i in pathway_show) {
+netAnalysis_signalingRole_network(cell_chat_data, signaling = i, width = 8, height = 2.5, font.size = 10)
+}
+
+ plt <- lapply(pathway_show, function(i){
+                      netAnalysis_signalingRole_network(cell_chat_data, signaling = i, width = 8, height = 2.5, font.size = 10)  } )
+ 
+plt_top <- plt[[1]]+ plt[[2]] + plt[[3]] 
+plt_middle <-  plt[[4]]+ plt[[5]] + plt[[6]]
+plt_bottm <- plt[[7]] + plt[[8]] + plt[[9]]
+
+```
+

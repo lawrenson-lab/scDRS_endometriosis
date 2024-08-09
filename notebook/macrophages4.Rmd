@@ -221,8 +221,8 @@ sf4<-temp%>%filter(pathway=="Estrogen")%>%
     scale_color_manual(values=c("#d53e48","gray"))#+
 #  stat_cor(method = "spearman")
 
-ggsave("m_fig4.pdf",plot = plot_grid(plot_grid(NULL,sf1,NULL,nrow=3,rel_heights = c(.1,.8,.1)),sf2,sf3+theme(legend.position = "none"),get_legend(sf3),sf4,ncol=5,labels = c('a','b','c','','d'),rel_widths = c(.2,.15,.2,.1,.35)),height = 4,width = 13,device = cairo_pdf)
-
+p0<- plot_grid(plot_grid(NULL,sf1,NULL,nrow=3,rel_heights = c(.1,.8,.1)),sf2,sf3+theme(legend.position = "none"),get_legend(sf3),sf4,ncol=5,labels = c('a','b','c','','d'),rel_widths = c(.2,.15,.2,.1,.35))
+ggsave("m_fig4.pdf",plot = plot_grid(p0,plot_grid(NULL,NULL,NULL,NULL,ncol=4,labels = c('e','f','g','h')),nrow = 2),height = 8,width = 15,device = cairo_pdf)
 ```
 
 # supplementary

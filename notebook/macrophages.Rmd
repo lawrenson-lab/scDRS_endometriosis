@@ -92,7 +92,7 @@ sf3<-DotPlot(immune,features = rev(canonical_markers))+RotatedAxis()+
     scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+labs(x="",y="")+
     theme(strip.text.x.top = element_text(angle=45))+
     guides(color = guide_colorbar(title = "Average\nexpression"),
-           size=guide_legend(title="Percent\nexpressed"))
+           size=guide_legend(title="Percent positive\ncells in cluster"))
 
 temp<-immune@meta.data%>%count(group_major_plus_immune)
 sf3A<-temp%>%mutate(group_major_plus_immune=factor(group_major_plus_immune,                                              levels=cell_order1$group_major_plus_immune))%>%
@@ -100,7 +100,7 @@ sf3A<-temp%>%mutate(group_major_plus_immune=factor(group_major_plus_immune,     
   theme_classic(base_size = 14)+theme(axis.text.y = element_blank(),
                                       axis.line.y = element_blank(),
                                       axis.ticks.y = element_blank())+
-  labs(y="")
+  labs(y="",x="Number of cells")
 
 p1<-plot_grid(sf3+theme(legend.position = "none",
                         strip.text.x.top = element_text(angle=65,vjust = .5,
@@ -164,9 +164,10 @@ sf8<-plot_df%>%
 ```{r}
 endometriosis<-read_tsv("scDRS/endometriosis.scdrs_group.group_harmonized_major_plus_immune")
 endometriosis<-endometriosis%>%
-  mutate(group=str_replace(group,"Memmory","Memory"),
-         group=str_replace(group,"Gamma-Delta","γδ"),
-         group=str_replace(group,"Cells","cells"))
+  mutate(group=str_replace(group,"Memmory","memory")%>%
+           str_replace("Gamma-Delta","γδ")%>%
+           str_replace("Cells","cells")%>%
+           str_replace("ly Exh","ly exh"))
 endometriosis<-scores%>%group_by(group_major_plus_immune)%>%
     summarise(signi=sum(mc_pval<0.05,na.rm = T))%>%
     left_join(endometriosis,by=c("group_major_plus_immune"="group"))
@@ -179,8 +180,7 @@ sf5<-scores%>%drop_na()%>%mutate(group_major_plus_immune=factor(group_major_plus
     ggplot(aes(x=group_major_plus_immune,y=norm_score))+geom_boxplot()+
     theme_classic(base_size = 16)+
     theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
-    labs(x="",y="scDRS")+
-    geom_hline(yintercept = 0,col="red")
+    labs(x="",y="scDRS")
 
 sf5<-sf5+geom_point(data=endometriosis,
                     aes(x=group_major_plus_immune,
@@ -209,8 +209,7 @@ plot_df<-plot_df%>%
 sf6<-scores%>%ggplot(aes(x=Class,y=norm_score))+geom_boxplot()+
   theme_classic(base_size = 16)+
   theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
-  labs(x="",y="")+
-  geom_hline(yintercept = 0,col="red")
+  labs(x="",y="")
 
 sf6<-sf6+geom_point(data=class,aes(x=Class,col=as.numeric(prop),size=as.numeric(assoc_mcp),y=7))+
     scale_size(range=c(6,2),limits = range(temp$assoc_mcp))+
@@ -235,7 +234,7 @@ sf7<-plot_df%>%drop_na%>%mutate(stage=factor(stage,levels = c("Low","High")))%>%
   ggplot(aes(x=stage,y=norm_score))+geom_boxplot()+
     theme_classic(base_size = 16)+
     theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
-    labs(x="",y="")+geom_hline(yintercept = 0,col="red")
+    labs(x="rASRM stage",y="")
 sf7<-sf7+geom_point(data=stage,aes(x=stage,col=prop,size=assoc_mcp,y=7))+
     scale_size(range=c(6,2),limits = range(temp$assoc_mcp))+
     scale_color_gradientn(breaks=c(1,3,10,30),trans="log10",
