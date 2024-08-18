@@ -87,31 +87,35 @@ sf1<-corres%>%drop_na()%>%ggplot(aes(x=cell_type,y=estimate))+geom_boxplot()+
         axis.line.x = element_blank(),
         axis.ticks.x = element_blank())
 
-temp<-corres%>%drop_na()%>%mutate(cluster=paste0(cell_type,'_',sign))
-temp<-temp%>%split(temp$cluster)%>%lapply(function(x) x%>%distinct(gene)%>%unlist)
-oraRes<-lapply(temp,function(x) enricher(gene=x,TERM2GENE = m_df)%>%as.data.frame)
-oraRes<-lapply(names(oraRes),function(x) oraRes[[x]]%>%mutate(cluster=x)%>%separate(cluster,into = c("cell_type","sign"),sep = '_'))%>%bind_rows()
-oraRes%>%write_tsv("docs/M2_scDRS_corr_ora.tsv")
+temp<-corres%>%drop_na()%>%filter(padj<0.05)%>%mutate(cluster=paste0(cell_type,'_',sign))
+temp<-corres%>%drop_na()%>%arrange(estimate)%>%select(gene,estimate)%>%deframe()
 
-temp<-oraRes%>%filter(str_detect(ID,"REACTOME"))%>%
-  mutate(ID=str_remove(ID,"REACTOME_")%>%
+rank<-corres%>%drop_na()%>%arrange(desc(estimate))
+rank<-rank%>%split(rank$cell_type)%>%lapply(function(x) 
+  x%>%dplyr::select(gene,estimate)%>%deframe)
+m_df<-m_df%>%filter(str_detect(gs_name,"REACTOME"))
+gseaRes <- lapply(rank,function(x) clusterProfiler::GSEA(x, pvalueCutoff = 0.01,pAdjustMethod = "fdr",TERM2GENE=m_df))
+gseaRes<-lapply(names(gseaRes),function(x) 
+  gseaRes[[x]]%>%as.data.frame%>%mutate(cell_type=x))%>%bind_rows()
+
+temp<-gseaRes%>%group_by(cell_type)%>%slice_max(abs(NES),n=5)
+temp<-temp%>%
+  mutate(sign=ifelse(NES>0,"positive","negative"),
+         ID=str_remove(ID,"REACTOME_")%>%
            str_replace_all("_"," ")%>%
            str_to_sentence()%>%
-           str_replace("tp53","TP53")%>%
-           str_replace("gtp","GTP")%>%
-           str_replace("gfr","GFR")%>%
-           str_replace("i mhc","I MHC")%>%
-           str_replace("growth factor receptors","\nGFR")%>%
-           str_replace("proces","\nproces"),
-         sign=ifelse(sign=="pos","positive","negative"))%>%
-  group_by(cell_type)%>%slice_max(Count,n=5)
-sf2<-temp%>%ggplot(aes(x=cell_type,y=ID,fill=p.adjust,col=p.adjust,size=Count,shape=sign))+
-  geom_point(aes(col=p.adjust),show.legend = F)+
-  scale_shape_manual(values=25:24)+
-  theme_classic(base_size = 14)+
-  theme(axis.text.x = element_text(angle=45,vjust =1,hjust = 1,size = 13),
-        legend.box = "vertical")+labs(x="",y="Pathway",shape="Correlation\nwith scDRS",
-                                      fill="P-value",size="Number\nof genes")
+           str_replace("eif2ak4 gcn2","EIF2AK4 GCN2")%>%
+           str_replace("Rrna","RRNA")%>%
+           str_replace("Hsf1","HSF1")%>%
+           str_replace("Hsp90","HSP90")%>%
+           str_replace("hormone","\nhormone"))
+sf2<-temp%>%ggplot(aes(x=cell_type,y=ID,fill=p.adjust,size=setSize,shape=sign,stroke=NA))+
+    geom_point()+
+    scale_shape_manual(values=25:24)+
+    theme_classic(base_size = 14)+
+    theme(axis.text.x = element_text(angle=45,vjust =1,hjust = 1,size = 13),
+          legend.box = "vertical")+labs(x="",y="Pathway",shape="Correlation\nwith scDRS",
+                                        fill="P-value",size="Number\nof genes")
 
 ```
 
@@ -243,9 +247,9 @@ eqtl<-eqtl%>%
   labs(y="Tissue",fill="P-value",shape="Effect allele\nexpression")
 
 
-p0<-plot_grid(sf1,NULL,sf2,labels = c('a','','b'),nrow=3,rel_heights = c(.5,-.07,.5),align = 'v')
-p0<-plot_grid(p0,sf3,rel_widths = c(.4,.6),labels = c('','c'))
-p1<-plot_grid(sf4,sf5,labels=c('d','e'),rel_widths = c(.55,.45))
+p0<-plot_grid(sf1,NULL,sf2,labels = c('A','','B'),nrow=3,rel_heights = c(.5,-.07,.5),align = 'v')
+p0<-plot_grid(p0,sf3,rel_widths = c(.4,.6),labels = c('','C'))
+p1<-plot_grid(sf4,sf5,labels=c('D','E'),rel_widths = c(.55,.45))
 ggsave("m_fig2.pdf",height = 15,width = 15,device = cairo_pdf,plot_grid(p0,p1,nrow=2))
 
 ggsave("supp_fig2.pdf",width = 10,height = 10,sup1,device = cairo_pdf)
