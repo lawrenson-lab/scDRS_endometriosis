@@ -248,7 +248,7 @@ eqtl<-eqtl%>%
 
 
 p0<-plot_grid(sf1,NULL,sf2,labels = c('A','','B'),nrow=3,rel_heights = c(.5,-.07,.5),align = 'v')
-p0<-plot_grid(p0,sf3,rel_widths = c(.4,.6),labels = c('','C'))
+p0<-plot_grid(p0,sf3,rel_widths = c(.45,.55),labels = c('','C'))
 p1<-plot_grid(sf4,sf5,labels=c('D','E'),rel_widths = c(.55,.45))
 ggsave("m_fig2.pdf",height = 15,width = 15,device = cairo_pdf,plot_grid(p0,p1,nrow=2))
 
