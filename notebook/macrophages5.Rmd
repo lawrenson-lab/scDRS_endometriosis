@@ -96,19 +96,17 @@ traits<-traits%>%reshape2::melt()
 plot_df<-plot_df%>%mutate(trait=factor(trait,levels=traits$value))
 
 
-sf7<-plot_df%>%mutate(asso=ifelse(assoc_mcp<0.05,T,F))%>%
-  ggplot(aes(y=group,x=trait,size=prop,fill=score,colour=asso))+
-  geom_point(pch=21)+
-  scale_fill_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
-  scale_colour_manual(values=c("white","black"))+
-  scale_shape_manual(values=16)+
-  geom_text(data=plot_df%>%mutate(hetero=ifelse(hetero_mcp<0.05,'X','')),
-            aes(y=group,x=trait,size=prop,label=hetero),col="black",show.legend = F)+
-  labs(x="",y="",size="% significan\ncells",fill="scDRS")+
-  theme_classic(base_size = 16)+
-  theme(axis.text.x = element_text(angle=90,vjust = .5,hjust = 1))+
-  guides(colour="none")
-
+sf7<-plot_df%>%
+    ggplot(aes(y=group,x=trait,size=prop))+
+    geom_point(aes(colour=score))+
+    scale_color_gradient2(low="#2166ac",mid="white",high = "#b2182b")+
+    geom_point(data=plot_df%>%filter(assoc_mcp<0.05),
+              aes(y=group,x=trait,size=prop),col="black",shape=1,show.legend = F)+
+    geom_point(data=plot_df%>%filter(assoc_mcp<0.05&hetero_mcp<0.05),
+              aes(y=group,x=trait,size=prop),col="black",shape=8,show.legend = F)+
+    labs(x="",y="",size="% Signif. Cells",col="scDRS")+
+    theme_classic(base_size = 14)+scale_size(range=c(0,8))+
+    theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))
 ggsave("m_fig6.pdf",device = cairo_pdf,plot=sf7)
 
 ```
