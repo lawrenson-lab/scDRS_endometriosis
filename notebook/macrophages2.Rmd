@@ -94,28 +94,19 @@ rank<-corres%>%drop_na()%>%arrange(desc(estimate))
 rank<-rank%>%split(rank$cell_type)%>%lapply(function(x) 
   x%>%dplyr::select(gene,estimate)%>%deframe)
 m_df<-m_df%>%filter(str_detect(gs_name,"REACTOME"))
-gseaRes <- lapply(rank,function(x) clusterProfiler::GSEA(x, pvalueCutoff = 0.01,pAdjustMethod = "fdr",TERM2GENE=m_df))
-gseaRes<-lapply(names(gseaRes),function(x) 
-  gseaRes[[x]]%>%as.data.frame%>%mutate(cell_type=x))%>%bind_rows()
-
-temp<-gseaRes%>%group_by(cell_type)%>%slice_max(abs(NES),n=5)
-temp<-temp%>%
-  mutate(sign=ifelse(NES>0,"positive","negative"),
-         ID=str_remove(ID,"REACTOME_")%>%
-           str_replace_all("_"," ")%>%
-           str_to_sentence()%>%
-           str_replace("eif2ak4 gcn2","EIF2AK4 GCN2")%>%
-           str_replace("Rrna","RRNA")%>%
-           str_replace("Hsf1","HSF1")%>%
-           str_replace("Hsp90","HSP90")%>%
-           str_replace("hormone","\nhormone"))
-sf2<-temp%>%ggplot(aes(x=cell_type,y=ID,fill=p.adjust,size=setSize,shape=sign,stroke=NA))+
-    geom_point()+
-    scale_shape_manual(values=25:24)+
-    theme_classic(base_size = 14)+
-    theme(axis.text.x = element_text(angle=45,vjust =1,hjust = 1,size = 13),
-          legend.box = "vertical")+labs(x="",y="Pathway",shape="Correlation\nwith scDRS",
-                                        fill="P-value",size="Number\nof genes")
+gseares<-lapply(rank, function(x) 
+GSEA(x,minGSSize = 50,pvalueCutoff = 0.01,TERM2GENE=m_df,seed=T))
+temp<-lapply(names(gseares),function(x) 
+gseares[[x]]%>%as.data.frame()%>%mutate(cell=x))%>%bind_rows()
+temp<-temp%>%group_by(cell)%>%slice_max(abs(NES),n = 5)%>%
+mutate(ID=str_remove(ID,"REACTOME_")%>%str_replace("_"," "))
+sf2<-temp%>%mutate(ID=str_replace(ID,"MONE","MONE\n"))%>%
+ggplot(aes(x=cell,y=ID,col=NES,size = p.adjust))+geom_point()+
+scale_size(range = c(8,2),transform = "log10",limits = c(1.7e-9,1e-2))+
+scale_colour_gradient2(low = "#2166ac", mid = "#f7f7f7", high = "#b2182b")+
+theme_classic(base_size = 14)+
+theme(axis.text.x = element_text(angle=45,vjust = 1,hjust = 1))+
+labs(y="Pathway",x="")
 
 ```
 
